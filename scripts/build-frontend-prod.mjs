@@ -3,6 +3,7 @@ import {
   copyFile,
   cp,
   mkdir,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -64,6 +65,59 @@ async function copyRequired(source, destination) {
   requirePath(source);
   await mkdir(path.dirname(destination), { recursive: true });
   await copyFile(source, destination);
+}
+
+// The spellcheck dictionaries are committed, not fetched: the build only has to
+// copy them to the root of the served frontend, where the worker looks for
+// dictionaries/<lang>/<lang>.aff. manifest.json is the single list the shell
+// reads at runtime, so a manifest that disagrees with what is on disk would ship
+// either a language the editor offers and cannot check, or one nobody can reach.
+// Both directions fail the build here instead.
+async function copyDictionaries() {
+  const sourceDir = path.join(projectRoot, 'src', 'dictionaries');
+  const manifestPath = path.join(sourceDir, 'manifest.json');
+  requirePath(manifestPath, 'the spellcheck dictionary manifest is required');
+
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  } catch (error) {
+    fail(`src/dictionaries/manifest.json is not valid JSON: ${error.message}`);
+  }
+  if (!Array.isArray(manifest) || manifest.some((entry) => typeof entry !== 'string')) {
+    fail('src/dictionaries/manifest.json must be an array of language folder names');
+  }
+
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  const onDisk = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+
+  const missing = manifest.filter((language) => !onDisk.includes(language));
+  if (missing.length > 0) {
+    fail(
+      `src/dictionaries/manifest.json lists ${missing.join(', ')}, but ` +
+        `src/dictionaries/ has no such folder (present: ${onDisk.join(', ') || 'none'})`,
+    );
+  }
+
+  const unlisted = onDisk.filter((language) => !manifest.includes(language));
+  if (unlisted.length > 0) {
+    fail(
+      `src/dictionaries/ contains ${unlisted.join(', ')}, which manifest.json does ` +
+        'not list; add the folder name to the manifest or remove the folder',
+    );
+  }
+
+  for (const language of manifest) {
+    for (const extension of ['aff', 'dic']) {
+      requirePath(
+        path.join(sourceDir, language, `${language}.${extension}`),
+        `the ${language} dictionary folder must contain ${language}.${extension}`,
+      );
+    }
+  }
+
+  await cp(sourceDir, path.join(outputRoot, 'dictionaries'), { recursive: true });
+  console.log(`[frontend-prod] dictionaries staged: ${manifest.join(', ')}`);
 }
 
 async function injectSdkScripts(editor, moduleName) {
@@ -286,6 +340,18 @@ await rm(
   path.join(buildRoot, 'sdkjs', 'common', 'libfont', 'engine', 'fonts_ie.js'),
   { force: true },
 );
+// Same reasoning for the spellcheck engine, whose asm.js fallback adds about
+// 770 KiB: the worker instantiates spell.wasm on every runtime we support.
+// spell.js.mem is that fallback's startup memory image, referenced by nothing
+// else, so it goes with it.
+await rm(
+  path.join(buildRoot, 'sdkjs', 'common', 'spell', 'spell', 'spell_ie.js'),
+  { force: true },
+);
+await rm(
+  path.join(buildRoot, 'sdkjs', 'common', 'spell', 'spell', 'spell.js.mem'),
+  { force: true },
+);
 
 await mkdir(outputRoot, { recursive: true });
 await copyRequired(
@@ -311,6 +377,7 @@ await copyRequired(
 await cp(path.join(projectRoot, 'src', 'fonts'), path.join(outputRoot, 'fonts'), {
   recursive: true,
 });
+await copyDictionaries();
 await cp(path.join(buildRoot, 'sdkjs'), path.join(outputRoot, 'sdkjs'), {
   recursive: true,
 });

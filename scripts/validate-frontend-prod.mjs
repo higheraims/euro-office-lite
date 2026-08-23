@@ -36,7 +36,33 @@ const required = [
   'sdkjs/slide/sdk-all-min.js',
   'sdkjs/slide/sdk-all.js',
   'web-apps/apps/api/documents/api.js',
+  'sdkjs/common/spell/spell/spell.js',
+  'sdkjs/common/spell/spell/spell.wasm',
+  'dictionaries/manifest.json',
 ];
+
+// Every language the manifest offers must be answerable: the shell advertises
+// exactly this list to the editor, and a language advertised without its two
+// Hunspell files would report every word of it as a mistake.
+const manifestPath = path.join(distRoot, 'dictionaries', 'manifest.json');
+if (existsSync(manifestPath)) {
+  let languages = [];
+  try {
+    languages = JSON.parse(await readFile(manifestPath, 'utf8'));
+  } catch (error) {
+    fail(`staged dictionaries/manifest.json is not valid JSON: ${error.message}`);
+  }
+  if (!Array.isArray(languages) || languages.length === 0) {
+    fail('staged dictionaries/manifest.json must be a non-empty array');
+  } else {
+    for (const language of languages) {
+      required.push(
+        `dictionaries/${language}/${language}.aff`,
+        `dictionaries/${language}/${language}.dic`,
+      );
+    }
+  }
+}
 
 for (const editor of [
   'documenteditor',
@@ -92,6 +118,8 @@ for (const forbidden of [
   'sdkjs/develop',
   'sdkjs/pdf/src/engine/drawingfile_ie.js',
   'sdkjs/common/libfont/engine/fonts_ie.js',
+  'sdkjs/common/spell/spell/spell_ie.js',
+  'sdkjs/common/spell/spell/spell.js.mem',
   'web-apps/vendor/less',
   'web-apps/apps/documenteditor/main/resources/help',
   'web-apps/apps/spreadsheeteditor/main/resources/help',
