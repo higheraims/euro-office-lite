@@ -1034,6 +1034,409 @@ function _loadEditorBin(b64data, fileName) {
   }
 }
 
+// ── Spellcheck (issue #6) ───────────────────────────────────────────────────
+//
+// sdkjs ships a Hunspell engine compiled to WebAssembly
+// (sdkjs/common/spell/spell/spell.js, loaded as a Web Worker) and our bundle has
+// always carried it, unused: no dictionaries were packaged and no shell answered
+// the editor. This wires both ends.
+//
+// The editor asks through AscDesktopEditor.SpellCheck(json) and expects the
+// answer on asc_nativeOnSpellCheck inside its own frame. Both halves of that
+// contract are installed by apiBase._coSpellCheckInit, which upstream only ever
+// reaches from the co-authoring socket's auth reply (apiBase wires it to
+// CoAuthoringApi.onSpellCheckInit). Offline there is no socket, so we call it
+// ourselves from CreateEditorApi; it takes the AscDesktopEditor branch, installs
+// asc_nativeOnSpellCheck and routes spellCheck/restart to us. It deliberately
+// does NOT emit asc_onSpellCheckInit for a local file, which suits us: the list
+// of languages upstream would send there is every language sdkjs knows, and we
+// have two.
+//
+// The worker runs in the top window, not in the editor frame: it is created once
+// and survives the iframe being torn down and rebuilt for the next document, so
+// a dictionary is downloaded and parsed once per session.
+//
+// One rule the whole design hangs on, measured before it was written: asked
+// about a language it has no dictionary for, the worker answers FALSE, not true
+// (Dictionary.load marks a missing language "ready" with no data and Hunspell
+// then fails every lookup). Letting it see an unpackaged language would
+// underline every word of it. Unpackaged languages are therefore answered here,
+// as correct, and never reach the worker.
+var SpellCheckBridge = (function() {
+  var WORKER_URL = 'sdkjs/common/spell/spell/spell.js';
+  var MANIFEST_URL = 'dictionaries/manifest.json';
+  var USER_DICT_KEY = 'eo-spell-userdict-v1';
+
+  var _worker = null;
+  var _manifest = null;
+  var _manifestPromise = null;
+  var _packed = null;
+  var _userWords = null;
+  var _tasks = {};
+  var _nextTaskId = 1;
+
+  function _log(message) {
+    window._eoLog('[SPELL] ' + message);
+  }
+
+  // The worker resolves dictionary URLs against this prefix, so it has to be
+  // absolute: the worker's own base is the directory of spell.js, four levels
+  // down. location.href is "tauri://localhost" with no path on WebKitGTK and
+  // "http://tauri.localhost/index.html" on WebView2; both end up at the root.
+  function _dictionariesPath() {
+    try {
+      var base = location.href.split('#')[0].split('?')[0];
+      var mark = base.indexOf('://');
+      if (mark === -1) return 'dictionaries';
+      var origin = base.substring(0, mark + 3);
+      var rest = base.substring(origin.length);
+      var slash = rest.lastIndexOf('/');
+      var dir = origin + (slash === -1 ? rest + '/' : rest.substring(0, slash + 1));
+      return dir + 'dictionaries';
+    } catch(e) {
+      return 'dictionaries';
+    }
+  }
+
+  function _manifestReady() {
+    if (_manifestPromise) return _manifestPromise;
+    _manifestPromise = fetch(MANIFEST_URL).then(function(response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    }).then(function(list) {
+      _manifest = Array.isArray(list) ? list : [];
+      _log('manifest loaded: ' + _manifest.join(', '));
+    }).catch(function(e) {
+      _manifest = [];
+      _log('manifest unavailable, spellcheck disabled: ' + (e.message || e));
+    });
+    return _manifestPromise;
+  }
+
+  // LCID -> dictionary folder, for the packaged languages only. The LCID table
+  // is sdkjs's own (AscCommon.spellcheckGetLanguages), never a copy of it: two
+  // LCIDs may share one folder and that mapping is upstream's to maintain.
+  function _packedLanguages(editorWindow) {
+    if (_packed) return _packed;
+    if (!_manifest) return null;
+    var table = null;
+    try {
+      if (editorWindow && editorWindow.AscCommon &&
+          typeof editorWindow.AscCommon.spellcheckGetLanguages === 'function') {
+        table = editorWindow.AscCommon.spellcheckGetLanguages();
+      }
+    } catch(e) {}
+    if (!table) return null;
+
+    var map = {};
+    var found = [];
+    for (var lcid in table) {
+      if (!table.hasOwnProperty(lcid)) continue;
+      var folder = table[lcid] && table[lcid].name;
+      if (!folder || _manifest.indexOf(folder) === -1) continue;
+      map[String(lcid)] = folder;
+      found.push(lcid + '=' + folder);
+    }
+    _packed = map;
+    _log('packaged languages: ' + (found.length ? found.join(', ') : 'none'));
+    return _packed;
+  }
+
+  function _loadUserDict() {
+    if (_userWords) return _userWords;
+    _userWords = {};
+    try {
+      var raw = localStorage.getItem(USER_DICT_KEY);
+      if (raw) {
+        var list = JSON.parse(raw);
+        if (list && list.length) {
+          for (var i = 0; i < list.length; i++) {
+            if (typeof list[i] === 'string' && list[i]) _userWords[list[i]] = true;
+          }
+        }
+      }
+    } catch(e) {
+      _log('user dictionary unreadable, starting empty: ' + (e.message || e));
+    }
+    return _userWords;
+  }
+
+  function _saveUserDict() {
+    try {
+      var list = [];
+      for (var word in _userWords) {
+        if (_userWords.hasOwnProperty(word)) list.push(word);
+      }
+      localStorage.setItem(USER_DICT_KEY, JSON.stringify(list));
+    } catch(e) {
+      _log('user dictionary not saved: ' + (e.message || e));
+    }
+  }
+
+  function _isUserWord(userWords, word) {
+    if (!userWords || !word) return false;
+    var text = String(word);
+    return !!(userWords[text] || userWords[text.toLowerCase()]);
+  }
+
+  // Pure. Splits one editor task into the part the worker may answer and the
+  // part answered here, and keeps the index map that puts them back together.
+  function _splitTask(data, packed, userWords) {
+    var words = data.usrWords || [];
+    var langs = data.usrLang || [];
+    var length = Math.min(words.length, langs.length);
+    var isSpell = data.type === 'spell';
+    var hasPositions = !!(data.usrPos && data.usrPosEnd);
+
+    var correct = new Array(length);
+    var suggest = new Array(length);
+    var map = [];
+    var subWords = [], subLangs = [], subPos = [], subPosEnd = [];
+
+    for (var i = 0; i < length; i++) {
+      var packaged = !!(packed && packed[String(langs[i])]);
+      if (!packaged || (isSpell && _isUserWord(userWords, words[i]))) {
+        correct[i] = true;
+        suggest[i] = [];
+        continue;
+      }
+      map.push(i);
+      subWords.push(words[i]);
+      subLangs.push(langs[i]);
+      if (hasPositions) {
+        subPos.push(data.usrPos[i]);
+        subPosEnd.push(data.usrPosEnd[i]);
+      }
+    }
+
+    var workerData = null;
+    if (map.length > 0) {
+      workerData = {
+        type: data.type,
+        usrWords: subWords,
+        usrLang: subLangs,
+        ParagraphId: data.ParagraphId,
+        RecalcId: data.RecalcId
+      };
+      if (hasPositions) {
+        workerData.usrPos = subPos;
+        workerData.usrPosEnd = subPosEnd;
+      }
+    }
+
+    return { workerData: workerData, map: map, correct: correct, suggest: suggest };
+  }
+
+  // Pure. The answer is the ORIGINAL task object with only the result field
+  // replaced, so every echoed field the editor put there survives untouched
+  // whether or not this code knows what it is for.
+  function _mergeAnswer(task, response) {
+    var answer = {};
+    for (var key in task.original) {
+      if (task.original.hasOwnProperty(key)) answer[key] = task.original[key];
+    }
+    var i;
+    if (task.original.type === 'suggest') {
+      var suggest = task.suggest.slice();
+      for (i = 0; i < task.map.length; i++) {
+        suggest[task.map[i]] = (response && response.usrSuggest && response.usrSuggest[i]) || [];
+      }
+      answer.usrSuggest = suggest;
+      delete answer.usrCorrect;
+    } else {
+      var correct = task.correct.slice();
+      for (i = 0; i < task.map.length; i++) {
+        correct[task.map[i]] = !!(response && response.usrCorrect && response.usrCorrect[i]);
+      }
+      answer.usrCorrect = correct;
+    }
+    return answer;
+  }
+
+  function _answer(payload) {
+    var ref = _getEditor();
+    if (!ref.ew || typeof ref.ew.asc_nativeOnSpellCheck !== 'function') {
+      _log('answer dropped: editor frame not listening');
+      return;
+    }
+    ref.ew.asc_nativeOnSpellCheck(payload);
+  }
+
+  function _onWorkerMessage(data) {
+    if (!data) return;
+    var id = data.__eoTask;
+    var task = (id !== undefined && id !== null) ? _tasks[id] : null;
+    if (task) delete _tasks[id];
+    if (!task) {
+      _log('worker answer without a pending task, dropped');
+      return;
+    }
+    _answer(_mergeAnswer(task, data));
+  }
+
+  function _ensureWorker(editorWindow) {
+    if (_worker) return _worker;
+    var packed = _packedLanguages(editorWindow);
+    if (!packed) return null;
+    try {
+      _worker = new Worker(WORKER_URL);
+    } catch(e) {
+      _log('worker could not be created: ' + (e.message || e));
+      return null;
+    }
+    _worker.onerror = function(e) {
+      _log('worker error: ' + ((e && e.message) || 'unknown') +
+           ' at ' + ((e && e.filename) || '?') + ':' + ((e && e.lineno) || 0));
+    };
+    _worker.onmessage = function(event) {
+      _onWorkerMessage(event.data);
+    };
+    _worker.postMessage({
+      type: 'init',
+      dictionaries_path: _dictionariesPath(),
+      languages: packed
+    });
+    return _worker;
+  }
+
+  // apiBase.SpellCheckApi.restart sets isRestart and expects the "clear" echo to
+  // clear it; every answer in flight until then is discarded by the editor. A
+  // fresh worker is only built when the next task arrives.
+  function _restart() {
+    if (_worker) {
+      try { _worker.terminate(); } catch(e) {}
+      _worker = null;
+    }
+    _tasks = {};
+    _answer('clear');
+  }
+
+  function _addWords(words) {
+    if (!words || !words.length) return;
+    var userWords = _loadUserDict();
+    var changed = false;
+    for (var i = 0; i < words.length; i++) {
+      var word = String(words[i] || '');
+      if (!word || userWords[word]) continue;
+      userWords[word] = true;
+      changed = true;
+    }
+    // The re-check is the editor's own move: asc_spellCheckAddToDictionary
+    // calls _spellCheckRestart(word) right after this, so nothing to trigger.
+    if (changed) _saveUserDict();
+  }
+
+  function _handleTask(data) {
+    var ref = _getEditor();
+    var packed = _packedLanguages(ref.ew) || {};
+    var split = _splitTask(data, packed, _loadUserDict());
+    var task = {
+      original: data,
+      map: split.map,
+      correct: split.correct,
+      suggest: split.suggest
+    };
+
+    if (!split.workerData) {
+      _answer(_mergeAnswer(task, null));
+      return;
+    }
+
+    var worker = _ensureWorker(ref.ew);
+    if (!worker) {
+      // Nothing to check against: answer everything as correct rather than
+      // leaving the paragraph waiting forever for a reply.
+      task.map = [];
+      _answer(_mergeAnswer(task, null));
+      return;
+    }
+
+    var id = _nextTaskId++;
+    _tasks[id] = task;
+    split.workerData.__eoTask = id;
+    worker.postMessage(split.workerData);
+  }
+
+  function check(json) {
+    try {
+      if (json === 'clear') {
+        _restart();
+        return;
+      }
+      var data = (typeof json === 'string') ? JSON.parse(json) : json;
+      if (!data) return;
+      if (data.type === 'add') {
+        _addWords(data.usrWords);
+        return;
+      }
+      if (data.type !== 'spell' && data.type !== 'suggest') return;
+      _handleTask(data);
+    } catch(e) {
+      _log('request failed: ' + (e.message || e));
+    }
+  }
+
+  function _emitInit(api, editorWindow) {
+    _manifestReady().then(function() {
+      var packed = _packedLanguages(editorWindow) || {};
+      var lcids = [];
+      for (var lcid in packed) {
+        // Strings, not numbers: web-apps compares these against the string keys
+        // of its own language table (Main.js loadLanguages, _.indexOf).
+        if (packed.hasOwnProperty(lcid)) lcids.push(String(lcid));
+      }
+      api.sendEvent('asc_onSpellCheckInit', lcids);
+      _log('languages offered to the editor: ' + (lcids.length ? lcids.join(', ') : 'none'));
+    });
+  }
+
+  function attach(api) {
+    if (!api || api.__eoSpellWired) return;
+    try {
+      if (typeof api._coSpellCheckInit !== 'function') {
+        _log('this build has no _coSpellCheckInit, spellcheck not wired');
+        return;
+      }
+      api.__eoSpellWired = true;
+      // A new API means a new editor frame: anything still in flight belongs to
+      // the frame that is gone and would answer into a dead window.
+      _tasks = {};
+      var editorWindow = window.AscDesktopEditor._editorWindow;
+      api._coSpellCheckInit();
+
+      // Without this every language reports a dictionary (CSpellCheckApi
+      // answers a flat true offline), so the editor would queue work for all of
+      // them. The pre-marking in _splitTask stays as the belt to this braces.
+      if (api.SpellCheckApi) {
+        api.SpellCheckApi.checkDictionary = function(lang) {
+          var packed = _packedLanguages(window.AscDesktopEditor._editorWindow || editorWindow);
+          return !!(packed && packed[String(lang)]);
+        };
+      }
+
+      // asc_onSpellCheckInit has no replay: sent before the UI registers its
+      // handler it is simply lost, and sent after the document is ready it
+      // arrives in time for the language pickers either way.
+      api.asc_registerCallback('asc_onDocumentContentReady', function() {
+        _emitInit(api, window.AscDesktopEditor._editorWindow || editorWindow);
+      });
+      _log('bridge attached to the editor API');
+    } catch(e) {
+      _log('attach failed: ' + (e.message || e));
+    }
+  }
+
+  _manifestReady();
+
+  return {
+    check: check,
+    attach: attach,
+    // Exposed for the pure-function tests; not part of the editor contract.
+    _splitTask: _splitTask,
+    _mergeAnswer: _mergeAnswer
+  };
+})();
+
 function _ensureCoreProps(ref) {
   try {
     var logicDoc = ref.editor.WordControl && ref.editor.WordControl.m_oLogicDocument;
@@ -1081,6 +1484,7 @@ window.AscDesktopEditor = {
       window.AscDesktopEditor._editorWindow = _findEditorWindow(window);
     }
 
+    SpellCheckBridge.attach(api);
   },
 
   LocalStartOpen: function() {
@@ -1714,7 +2118,7 @@ window.AscDesktopEditor = {
   IsSignaturesSupport: () => false,
   IsProtectionSupport: () => false,
   isBlockchainSupport: () => false,
-  SpellCheck: function() {},
+  SpellCheck: function(json) { SpellCheckBridge.check(json); },
   SetFullscreen: function(fullscreen) {
     var win = window.__TAURI__.window.getCurrentWindow();
     var fs = !!fullscreen;
