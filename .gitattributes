@@ -1,2 +1,5 @@
 # Force LF for shell scripts (required for macOS/Linux execution)
 *.sh text eol=lf
+
+# Hunspell dictionaries are byte-exact runtime data: never convert their line endings
+src/dictionaries/** -text
