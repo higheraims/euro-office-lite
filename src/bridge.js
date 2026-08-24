@@ -1066,6 +1066,8 @@ var SpellCheckBridge = (function() {
   var WORKER_URL = 'sdkjs/common/spell/spell/spell.js';
   var MANIFEST_URL = 'dictionaries/manifest.json';
   var USER_DICT_KEY = 'eo-spell-userdict-v1';
+  // 0x0A, the primary language id shared by every Spanish locale.
+  var SPANISH_PRIMARY_LANGUAGE = 10;
 
   var _worker = null;
   var _manifest = null;
@@ -1113,6 +1115,41 @@ var SpellCheckBridge = (function() {
     return _manifestPromise;
   }
 
+  // Every Spanish LCID web-apps knows about. The low 10 bits of an LCID are its
+  // primary language, and 0x0A is Spanish, so the whole es-* family answers this
+  // test without a table of our own to keep in step.
+  //
+  // The list comes from web-apps' own LanguageInfo rather than from the sdkjs
+  // spellcheck table, which names only es-ES. It has to be enumerated, not
+  // matched at call time: these LCIDs travel as keys in the worker's languages
+  // map (the worker resolves languages[lcid] by exact key) and as the array
+  // behind asc_onSpellCheckInit, which is what paints the dictionary icon on
+  // each entry of the language picker.
+  //
+  // Entries without a third field are kept too, even though the picker hides
+  // them: what the picker offers and what a document is tagged with are
+  // different things, and es-ES_tradnl (1034) in particular is the Spanish LCID
+  // that older Word documents carry. An LCID the picker does not know is simply
+  // never looked up there, so the extra entries cost nothing.
+  function _spanishVariants(editorWindow) {
+    var found = [];
+    try {
+      var common = editorWindow && editorWindow.Common;
+      var info = common && common.util && common.util.LanguageInfo;
+      var table = (info && typeof info.getLanguages === 'function') ? info.getLanguages() : null;
+      if (!table) return found;
+      for (var code in table) {
+        if (!table.hasOwnProperty(code)) continue;
+        var lcid = parseInt(code, 10);
+        if (!lcid || (lcid & 0x3FF) !== SPANISH_PRIMARY_LANGUAGE) continue;
+        found.push(String(lcid));
+      }
+    } catch(e) {
+      _log('the language table was unreadable, Spanish variants not aliased: ' + (e.message || e));
+    }
+    return found;
+  }
+
   // LCID -> dictionary folder, for the packaged languages only. The LCID table
   // is sdkjs's own (AscCommon.spellcheckGetLanguages), never a copy of it: two
   // LCIDs may share one folder and that mapping is upstream's to maintain.
@@ -1137,6 +1174,32 @@ var SpellCheckBridge = (function() {
       map[String(lcid)] = folder;
       found.push(lcid + '=' + folder);
     }
+    // Spanish is a single orthography. The RAE norm is shared across the
+    // Spanish-speaking world and the rla-es dictionary bundled here is
+    // pan-Hispanic, so every Spanish LCID is answered from the es_ES folder
+    // instead of only es-ES itself: a document written in es-419 or es-MX was
+    // getting no spellcheck at all, because the sdkjs table only names 3082.
+    //
+    // English deliberately does NOT get the same treatment. en_GB and en_AU
+    // disagree with en_US on the spelling of ordinary words (colour/color,
+    // realise/realize), so aliasing them to the en_US dictionary would underline
+    // correct text, which is worse than checking nothing.
+    //
+    // Accepted cost: the worker keys its dictionaries by LCID, so a document
+    // that really mixes several Spanish variants loads the same two files once
+    // per variant in use. Rare, bounded, and not worth the complexity of a
+    // shared-file cache inside a worker we do not own.
+    if (_manifest.indexOf('es_ES') !== -1) {
+      var variants = _spanishVariants(editorWindow);
+      var aliased = 0;
+      for (var i = 0; i < variants.length; i++) {
+        if (map[variants[i]]) continue;
+        map[variants[i]] = 'es_ES';
+        aliased++;
+      }
+      if (aliased > 0) found.push(aliased + ' more Spanish variants=es_ES');
+    }
+
     _packed = map;
     _log('packaged languages: ' + (found.length ? found.join(', ') : 'none'));
     return _packed;
