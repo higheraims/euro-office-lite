@@ -1376,6 +1376,44 @@ var SpellCheckBridge = (function() {
     }
   }
 
+  // A handler of web-apps is on the other side of this event, and what it does
+  // with the list is not ours to guarantee. It must not be able to break the
+  // chain it was called from: the spreadsheet's handler throws when the list
+  // arrives before its side panel exists, and unguarded that surfaced as an
+  // unhandled rejection and swallowed everything after the send.
+  function _sendInit(api, lcids) {
+    try {
+      api.sendEvent('asc_onSpellCheckInit', lcids);
+      _log('languages offered to the editor: ' + (lcids.length ? lcids.join(', ') : 'none'));
+    } catch(e) {
+      _log('the editor UI threw while taking the language list: ' + (e.message || e));
+    }
+  }
+
+  // The spreadsheet builds its spellcheck side panel on the postload pass, well
+  // after asc_onDocumentContentReady, and its own controller announces the new
+  // panel with script:loaded:spellcheck immediately after creating it. That is
+  // the first moment the list can be stored AND reach the panel's language
+  // combo, so it is sent again there. Re-sending is idempotent (loadLanguages
+  // rebuilds the whole list from the array), and the notification exists only in
+  // the spreadsheet, so this is inert in the other two editors.
+  function _watchSpellcheckPanel(api, editorWindow, lcids) {
+    try {
+      if (api.__eoSpellPanelWatched) return;
+      var centre = editorWindow && editorWindow.Common && editorWindow.Common.NotificationCenter;
+      if (!centre || typeof centre.on !== 'function') return;
+      api.__eoSpellPanelWatched = true;
+      centre.on('script:loaded:spellcheck', function() {
+        if (api.__eoSpellPanelInit) return;
+        api.__eoSpellPanelInit = true;
+        _log('spellcheck panel built, sending the language list again');
+        _sendInit(api, lcids);
+      });
+    } catch(e) {
+      _log('could not watch for the spellcheck panel: ' + (e.message || e));
+    }
+  }
+
   function _emitInit(api, editorWindow) {
     _manifestReady().then(function() {
       var packed = _packedLanguages(editorWindow) || {};
@@ -1385,8 +1423,8 @@ var SpellCheckBridge = (function() {
         // of its own language table (Main.js loadLanguages, _.indexOf).
         if (packed.hasOwnProperty(lcid)) lcids.push(String(lcid));
       }
-      api.sendEvent('asc_onSpellCheckInit', lcids);
-      _log('languages offered to the editor: ' + (lcids.length ? lcids.join(', ') : 'none'));
+      _watchSpellcheckPanel(api, editorWindow, lcids);
+      _sendInit(api, lcids);
     });
   }
 
