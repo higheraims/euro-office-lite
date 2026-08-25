@@ -322,7 +322,7 @@ fn main() {
                                 .asset_resolver()
                                 .get(format!("/{}/{}/{}", dictionaries::DIR_NAME, folder, file))
                                 .filter(|asset| {
-                                    dictionaries::is_dictionary_asset(&asset.mime_type)
+                                    dictionaries::is_dictionary_asset(&asset.bytes)
                                 })
                                 .map(|asset| (asset.bytes, asset.mime_type))
                         })

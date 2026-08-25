@@ -97,13 +97,31 @@ pub fn classify(folders: &[(String, Vec<String>)]) -> (Vec<String>, Vec<String>)
 // start screen's markup in it, hand that to hunspell as a dictionary and start
 // underlining correct words instead of simply checking nothing. The bridge
 // already never asks for a language it has not seen, so this is the second
-// lock on the same door: an answer that came back as HTML is the fallback, not
-// a dictionary, and is treated as a miss.
-pub fn is_dictionary_asset(mime_type: &str) -> bool {
-    !mime_type
-        .trim_start()
-        .to_ascii_lowercase()
-        .starts_with("text/html")
+// lock on the same door.
+//
+// The test is on the bytes and not on the mime type, which was the first
+// attempt and was wrong in the worst direction: MimeType::parse_from_uri falls
+// back to text/html for EVERY extension it does not know, and it knows neither
+// .aff nor .dic, so a perfectly good bundled dictionary is announced as HTML
+// exactly like the fallback page. Judging by mime therefore rejected en_US and
+// es_ES too, the worker sat waiting on a 404 that never resolves, and spell
+// check died for the languages that ship with the app. The content tells the
+// two apart with no ambiguity: the fallback is an HTML document, an .aff opens
+// with a comment or a directive and a .dic with its word count.
+pub fn is_dictionary_asset(bytes: &[u8]) -> bool {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace() && !matches!(b, 0xEF | 0xBB | 0xBF))
+        .unwrap_or(bytes.len());
+    let head: Vec<u8> = bytes[start..]
+        .iter()
+        .take(9)
+        .map(|b| b.to_ascii_lowercase())
+        .collect();
+    if head.is_empty() {
+        return false;
+    }
+    !(head.starts_with(b"<!doctype") || head.starts_with(b"<html"))
 }
 
 pub fn user_dir(app: &AppHandle) -> Option<PathBuf> {
@@ -278,20 +296,26 @@ mod tests {
         assert_eq!(skipped, vec!["../evil"]);
     }
 
+    // The exact bytes the start screen answered with on Ubuntu when a missing
+    // language was requested through the old, mime based test.
     #[test]
     fn the_single_page_fallback_is_not_a_dictionary() {
-        assert!(!is_dictionary_asset("text/html"));
-        assert!(!is_dictionary_asset("text/html; charset=utf-8"));
-        assert!(!is_dictionary_asset("TEXT/HTML"));
-        assert!(!is_dictionary_asset(" text/html"));
+        assert!(!is_dictionary_asset(b"<!DOCTYPE html><html lang=\"es\">"));
+        assert!(!is_dictionary_asset(b"<html><body>x</body></html>"));
+        assert!(!is_dictionary_asset(b"<!doctype html>"));
+        assert!(!is_dictionary_asset(b"\n  <!DOCTYPE html>"));
+        assert!(!is_dictionary_asset(b"\xef\xbb\xbf<!DOCTYPE html>"));
+        assert!(!is_dictionary_asset(b""));
     }
 
+    // Real openings: en_US.aff starts with a comment, uk_UA.aff with a
+    // directive, and every .dic with the number of words it holds.
     #[test]
-    fn the_types_a_real_dictionary_arrives_as_are_kept() {
-        assert!(is_dictionary_asset("application/octet-stream"));
-        assert!(is_dictionary_asset("text/plain"));
-        assert!(is_dictionary_asset("text/plain; charset=utf-8"));
-        assert!(is_dictionary_asset(""));
+    fn a_real_dictionary_is_kept() {
+        assert!(is_dictionary_asset(b"# 2024-01-29 (Marco A.G.Pinto)"));
+        assert!(is_dictionary_asset(b"SET UTF-8\nTRY esiaonrtlc"));
+        assert!(is_dictionary_asset(b"336673\n+cs=word/j"));
+        assert!(is_dictionary_asset(b"49435\nabandon"));
     }
 
     #[test]
