@@ -16,7 +16,7 @@ Supports Word, Excel, and PowerPoint documents with native file operations and d
 
 Euro-Office Lite is alpha. A few things you will run into early:
 
-- **Spell check covers English and Spanish only** (#6). Dictionaries for both ship with the app (every regional Spanish variant is checked). Text in other languages is left unchecked, not marked as wrong.
+- **Only English and Spanish are checked out of the box** (#6). Dictionaries for both ship with the app (every regional Spanish variant is checked). Text in other languages is left unchecked, not marked as wrong, and you can add any other language yourself: see [Adding more spellcheck languages](#adding-more-spellcheck-languages).
 - **No crash recovery.** Closing the window prompts you to save unsaved changes, but if the app crashes or is force-quit mid-edit, that unsaved work is lost. Save often.
 - **Plain text (.txt) and .csv files cannot be opened yet.** They need an encoding and delimiter dialog the app does not have; DOCX, XLSX, PPTX, ODT, ODS, ODP and RTF all work.
 
@@ -97,6 +97,18 @@ flatpak update org.eurooffice.Lite
 ```
 
 Or download the `.flatpak` bundle from the release assets.
+
+## Adding more spellcheck languages
+
+English and Spanish ship with the app. Any other language from the [Euro-Office dictionaries repository](https://github.com/Euro-Office/dictionaries) can be added by copying its folder into your own dictionaries folder and restarting the app.
+
+- **Windows**: `%APPDATA%\org.euro-office.lite\dictionaries\`
+- **macOS**: `~/Library/Application Support/org.euro-office.lite/dictionaries/`
+- **Linux**: `~/.local/share/org.euro-office.lite/dictionaries/`
+
+Create the folder if it is not there yet. Each language goes in its own folder holding the two files hunspell needs, named after the folder, so Ukrainian is `uk_UA/uk_UA.aff` and `uk_UA/uk_UA.dic`. Keep the folder name the repository gives it, because that name is how the app matches your folder to the language set on the text. A folder missing either file is ignored, and the reason is written to the log file listed below.
+
+The app downloads nothing. You fetch the dictionary with your browser and copy it in yourself.
 
 ## Log files
 
