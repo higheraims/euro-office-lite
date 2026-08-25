@@ -1066,6 +1066,7 @@ var SpellCheckBridge = (function() {
   var WORKER_URL = 'sdkjs/common/spell/spell/spell.js';
   var MANIFEST_URL = 'dictionaries/manifest.json';
   var USER_DICT_KEY = 'eo-spell-userdict-v1';
+  var USER_FOLDERS_COMMAND = 'list_user_dictionaries';
   // 0x0A, the primary language id shared by every Spanish locale.
   var SPANISH_PRIMARY_LANGUAGE = 10;
 
@@ -1074,6 +1075,11 @@ var SpellCheckBridge = (function() {
   var _manifestPromise = null;
   var _packed = null;
   var _userWords = null;
+  // Language folders found in the user's dictionaries directory. Null means the
+  // answer has not arrived yet, which is not the same as an empty list.
+  var _userFolders = null;
+  var _userFoldersPromise = null;
+  var _waitLogged = false;
   var _tasks = {};
   var _nextTaskId = 1;
 
@@ -1082,22 +1088,58 @@ var SpellCheckBridge = (function() {
   }
 
   // The worker resolves dictionary URLs against this prefix, so it has to be
-  // absolute: the worker's own base is the directory of spell.js, four levels
-  // down. location.href is "tauri://localhost" with no path on WebKitGTK and
-  // "http://tauri.localhost/index.html" on WebView2; both end up at the root.
+  // absolute. It points at the ascdesktop protocol rather than at the frontend
+  // origin because that handler is the only place where the bundled
+  // dictionaries and the user's folder can hide behind one base: the worker
+  // asks for "<base>/<folder>/<folder>.aff" and never learns which of the two
+  // answered. One base for every language also means one code path to keep
+  // right, which is why the bundled ones moved over here too.
+  //
+  // ASC_PROTO_BASE already carries the per-platform spelling of that protocol
+  // (a real custom scheme on mac and Linux, http://ascdesktop.localhost on
+  // Windows, where WebView2 has no custom schemes), so it is reused rather than
+  // spelled out again. Reaching it from inside the worker was verified on
+  // WebKitGTK before this was written (journal 053).
   function _dictionariesPath() {
-    try {
-      var base = location.href.split('#')[0].split('?')[0];
-      var mark = base.indexOf('://');
-      if (mark === -1) return 'dictionaries';
-      var origin = base.substring(0, mark + 3);
-      var rest = base.substring(origin.length);
-      var slash = rest.lastIndexOf('/');
-      var dir = origin + (slash === -1 ? rest + '/' : rest.substring(0, slash + 1));
-      return dir + 'dictionaries';
-    } catch(e) {
-      return 'dictionaries';
-    }
+    return ASC_PROTO_BASE + 'dictionaries';
+  }
+
+  // The Rust side answers with the folders that hold a usable pair of hunspell
+  // files, plus the ones it refused. Both lists are logged: a folder that was
+  // ignored has to say so somewhere, or a user who misnamed one is left with a
+  // language that silently never appears.
+  //
+  // A failure here is not allowed to be fatal. An older binary without the
+  // command, or any error at all, leaves the bridge with the bundled
+  // dictionaries and a line in the log, which is exactly how v0.17.18 behaved.
+  function _userFoldersReady() {
+    if (_userFoldersPromise) return _userFoldersPromise;
+    _userFoldersPromise = Promise.resolve().then(function() {
+      return invoke(USER_FOLDERS_COMMAND);
+    }).then(function(result) {
+      var valid = (result && result.valid) || [];
+      var skipped = (result && result.skipped) || [];
+      _userFolders = valid.slice();
+      if (valid.length) {
+        _log('user dictionaries: ' + valid.join(', '));
+      } else {
+        _log('no user dictionaries installed');
+      }
+      if (skipped.length) {
+        _log('user dictionary folders ignored, each needs <folder>.aff and ' +
+             '<folder>.dic named after the folder: ' + skipped.join(', '));
+      }
+    }).catch(function(e) {
+      _userFolders = [];
+      _log('the user dictionary folder could not be read, using the bundled ' +
+           'dictionaries only: ' + (e.message || e));
+    });
+    return _userFoldersPromise;
+  }
+
+  // Both lists have to be in before the language map is worth caching.
+  function _dictionariesReady() {
+    return Promise.all([_manifestReady(), _userFoldersReady()]);
   }
 
   function _manifestReady() {
@@ -1156,6 +1198,12 @@ var SpellCheckBridge = (function() {
   function _packedLanguages(editorWindow) {
     if (_packed) return _packed;
     if (!_manifest) return null;
+    // Null means the backend has not answered yet, which is not an empty list.
+    // Computing the map now would cache a bundled-only answer for the whole
+    // session, so the user's languages would never appear however long the
+    // wait was. A failed command lands here as an empty array, not as null, so
+    // that case still resolves to bundled-only instead of blocking.
+    if (_userFolders === null) return null;
     var table = null;
     try {
       if (editorWindow && editorWindow.AscCommon &&
@@ -1167,12 +1215,29 @@ var SpellCheckBridge = (function() {
 
     var map = {};
     var found = [];
+    // The user's folders are matched to LCIDs through the same sdkjs table the
+    // bundled ones use, by exact folder name. That is why the README asks for
+    // the name the dictionaries repo gives the language: a folder this table
+    // does not name has no LCID to be offered under, and the editor only ever
+    // asks about languages by LCID.
+    var userFolders = _userFolders;
+    var matched = {};
+    var shared = [];
     for (var lcid in table) {
       if (!table.hasOwnProperty(lcid)) continue;
       var folder = table[lcid] && table[lcid].name;
-      if (!folder || _manifest.indexOf(folder) === -1) continue;
+      if (!folder) continue;
+      var bundled = _manifest.indexOf(folder) !== -1;
+      var fromUser = userFolders.indexOf(folder) !== -1;
+      if (fromUser) {
+        if (!matched[folder]) {
+          matched[folder] = true;
+          if (bundled) shared.push(folder);
+        }
+      }
+      if (!bundled && !fromUser) continue;
       map[String(lcid)] = folder;
-      found.push(lcid + '=' + folder);
+      found.push(lcid + '=' + folder + (bundled ? '' : ' (user)'));
     }
     // Spanish is a single orthography. The RAE norm is shared across the
     // Spanish-speaking world and the rla-es dictionary bundled here is
@@ -1202,6 +1267,18 @@ var SpellCheckBridge = (function() {
 
     _packed = map;
     _log('packaged languages: ' + (found.length ? found.join(', ') : 'none'));
+    if (shared.length) {
+      _log('these languages ship with the app and were also found in the user ' +
+           'folder, whose files are read first: ' + shared.join(', '));
+    }
+    var unmatched = [];
+    for (var u = 0; u < userFolders.length; u++) {
+      if (!matched[userFolders[u]]) unmatched.push(userFolders[u]);
+    }
+    if (unmatched.length) {
+      _log('user dictionary folders this build has no language id for, the ' +
+           'folder needs the name the dictionaries repo uses: ' + unmatched.join(', '));
+    }
     return _packed;
   }
 
@@ -1339,6 +1416,18 @@ var SpellCheckBridge = (function() {
 
   function _ensureWorker(editorWindow) {
     if (_worker) return _worker;
+    // The worker takes its language map once and ignores every later init, so
+    // starting it before the user folders are known would lock those languages
+    // out for the whole session. Waiting costs at most one request, which the
+    // caller answers as correct rather than underlining anything, and the
+    // editor asks again.
+    if (!_userFolders) {
+      if (!_waitLogged) {
+        _waitLogged = true;
+        _log('waiting for the user dictionary list before starting the worker');
+      }
+      return null;
+    }
     var packed = _packedLanguages(editorWindow);
     if (!packed) return null;
     try {
@@ -1478,7 +1567,7 @@ var SpellCheckBridge = (function() {
   }
 
   function _emitInit(api, editorWindow) {
-    _manifestReady().then(function() {
+    _dictionariesReady().then(function() {
       var packed = _packedLanguages(editorWindow) || {};
       var lcids = [];
       for (var lcid in packed) {
@@ -1527,7 +1616,9 @@ var SpellCheckBridge = (function() {
     }
   }
 
-  _manifestReady();
+  // Both lists are asked for as soon as the bridge loads, so they are in well
+  // before the first document is ready and the worker never has to wait.
+  _dictionariesReady();
 
   return {
     check: check,
