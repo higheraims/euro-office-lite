@@ -100,15 +100,15 @@ Or download the `.flatpak` bundle from the release assets.
 
 ## Adding more spellcheck languages
 
-English and Spanish ship with the app. Any other language from the [Euro-Office dictionaries repository](https://github.com/Euro-Office/dictionaries) can be added by copying its folder into your own dictionaries folder and restarting the app.
+The spell checker works with any language from the [Euro-Office dictionaries repository](https://github.com/Euro-Office/dictionaries). Each language there is a folder named after its locale, holding the two files hunspell needs. A language the repository names `xx_YY` goes in as `xx_YY/xx_YY.aff` and `xx_YY/xx_YY.dic`, inside your dictionaries folder:
 
 - **Windows**: `%APPDATA%\org.euro-office.lite\dictionaries\`
 - **macOS**: `~/Library/Application Support/org.euro-office.lite/dictionaries/`
 - **Linux**: `~/.local/share/org.euro-office.lite/dictionaries/`
 
-Create the folder if it is not there yet. Each language goes in its own folder holding the two files hunspell needs, named after the folder, so Ukrainian is `uk_UA/uk_UA.aff` and `uk_UA/uk_UA.dic`. Keep the folder name the repository gives it, because that name is how the app matches your folder to the language set on the text. A folder missing either file is ignored, and the reason is written to the log file listed below.
+Create the folder if it is not there yet, restart the app, and the language shows up in the language list with a dictionary indicator, checked like any other. Keep the folder name exactly as the repository spells it, because that name is how the app matches the folder to the language set on the text. A folder missing either file is ignored, and the reason is written to the log file listed below.
 
-The app downloads nothing. You fetch the dictionary with your browser and copy it in yourself.
+Only English and Spanish come preinstalled for now; every other language is added this way. The app downloads nothing: you fetch the dictionary with your browser and copy it in yourself.
 
 ## Log files
 
