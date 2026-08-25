@@ -3,6 +3,7 @@
 mod bridge;
 mod clipboard;
 mod converter;
+mod dictionaries;
 mod file_ops;
 mod note_separator;
 mod recent;
@@ -160,6 +161,7 @@ fn main() {
             recent::recent_files_state,
             recent::set_recent_files_enabled,
             recent::clear_recent_files,
+            dictionaries::list_user_dictionaries,
         ])
         .register_uri_scheme_protocol("ascdesktop", |ctx, request| {
             let uri = request.uri().to_string();
@@ -302,6 +304,47 @@ fn main() {
                     .header("Access-Control-Allow-Origin", "*")
                     .body(b"Download failed".to_vec())
                     .unwrap();
+            }
+
+            // Spellcheck dictionaries. The worker resolves every language
+            // against a single base, so this is where the user's own folder and
+            // the bundled ones meet: the user's disk answers first and whatever
+            // is not there falls back to the asset baked into the binary, which
+            // keeps es_ES and en_US coming out of the bundle without a second
+            // code path in the bridge. split_request is the whitelist that makes
+            // reading from a user-writable directory safe.
+            if decoded_path.starts_with("dictionaries/") {
+                let served = dictionaries::split_request(&decoded_path).and_then(|(folder, file)| {
+                    dictionaries::read_user_file(ctx.app_handle(), &folder, &file)
+                        .map(|bytes| (bytes, "application/octet-stream".to_string()))
+                        .or_else(|| {
+                            ctx.app_handle()
+                                .asset_resolver()
+                                .get(format!("/{}/{}/{}", dictionaries::DIR_NAME, folder, file))
+                                .filter(|asset| {
+                                    dictionaries::is_dictionary_asset(&asset.mime_type)
+                                })
+                                .map(|asset| (asset.bytes, asset.mime_type))
+                        })
+                });
+                // no-store: the point of the folder is that replacing a file and
+                // restarting picks the new one up, which a cached response would
+                // quietly defeat.
+                return match served {
+                    Some((bytes, mime)) => tauri::http::Response::builder()
+                        .status(200)
+                        .header("Content-Type", mime)
+                        .header("Cache-Control", "no-store")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(bytes)
+                        .unwrap(),
+                    None => tauri::http::Response::builder()
+                        .status(404)
+                        .header("Cache-Control", "no-store")
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(b"Not Found".to_vec())
+                        .unwrap(),
+                };
             }
 
             let result = if decoded_path.starts_with("abs/") {
