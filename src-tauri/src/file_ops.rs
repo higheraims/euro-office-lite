@@ -12,9 +12,11 @@ pub struct AppState {
     // nothing is worse than no entry. The first save that actually writes it
     // records it.
     pub pending_recent: Mutex<Option<PathBuf>>,
+    // Crash recovery session of the open document, if any (recovery.rs).
+    pub recovery: Mutex<Option<crate::recovery::RecoverySession>>,
 }
 
-fn log_event(state: &AppState, msg: &str) {
+pub(crate) fn log_event(state: &AppState, msg: &str) {
     println!("{}", msg);
     use std::io::Write;
     let log_path = state.temp_dir.join("js-debug.log");
@@ -24,13 +26,6 @@ fn log_event(state: &AppState, msg: &str) {
         .open(&log_path)
     {
         let _ = writeln!(f, "{}", msg);
-    }
-}
-
-fn clear_changes(temp_dir: &std::path::Path) {
-    let changes_dir = temp_dir.join("changes");
-    if changes_dir.exists() {
-        let _ = std::fs::remove_dir_all(&changes_dir);
     }
 }
 
@@ -44,9 +39,11 @@ fn clear_changes(temp_dir: &std::path::Path) {
 // and nothing else ever emptied them: the temp dir is fixed, so they grew across
 // documents and across sessions, and a stale image stayed reachable through
 // ascdesktop://abs/ while a different document was open.
+// changes/ is in the list only to sweep what older versions left there: the
+// editor's changes now live in the recovery session folder (recovery.rs), never
+// in the temp dir.
 fn clear_document_temp(temp_dir: &std::path::Path) {
-    clear_changes(temp_dir);
-    for dir in ["media", "insert_tmp", "downloads"] {
+    for dir in ["changes", "media", "insert_tmp", "downloads"] {
         let path = temp_dir.join(dir);
         if path.exists() {
             let _ = std::fs::remove_dir_all(&path);
@@ -207,6 +204,12 @@ async fn open_file_inner(
 
     clear_pending_recent(&state.pending_recent);
 
+    // The document on screen is being replaced, so its recovery folder goes
+    // with it: by this point the frontend has confirmed there was nothing to
+    // lose, or the user chose to discard. The new document opens its own
+    // session from the bridge, once the editor has the bytes.
+    crate::recovery::end_session(&state, true);
+
     // An empty file has nothing to convert, so a blank template of the matching
     // type is converted instead and current_file still points at the file the
     // user opened: the first save writes the document there, in the format its
@@ -351,10 +354,6 @@ pub async fn save_file_as(
     let format_from = 8192;
     let format_to = detect_format(&dest);
 
-    if format_to == 513 {
-        clear_changes(&state.temp_dir);
-    }
-
     super::converter::convert_file(
         &app,
         &input.to_string_lossy(),
@@ -376,22 +375,6 @@ pub async fn save_file_as(
         *state.modified.lock().unwrap() = false;
         super::recent::record(&app, &path);
     }
-    Ok("ok".to_string())
-}
-
-#[tauri::command]
-pub async fn save_changes(
-    state: State<'_, AppState>,
-    changes: String,
-    _delete_index: Option<i32>,
-    count: i32,
-) -> Result<String, String> {
-    let changes_dir = state.temp_dir.join("changes");
-    std::fs::create_dir_all(&changes_dir).map_err(|e| e.to_string())?;
-
-    let filename = format!("change_{}.json", count);
-    std::fs::write(changes_dir.join(&filename), &changes).map_err(|e| e.to_string())?;
-
     Ok("ok".to_string())
 }
 
@@ -429,8 +412,6 @@ pub async fn print_document(
     if pdf_path.exists() {
         let _ = std::fs::remove_file(&pdf_path);
     }
-    clear_changes(&state.temp_dir);
-
     super::converter::convert_file(
         &app,
         &editor_bin.to_string_lossy(),
@@ -721,8 +702,8 @@ mod tests {
 
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-    // A throwaway temp dir laid out like the app's: changes/ with one pending
-    // change and media/ with one inserted image.
+    // A throwaway temp dir laid out like the app's: media/ with one inserted
+    // image, plus the changes/ an older version left behind.
     fn temp_dir_with_changes_and_media() -> PathBuf {
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
@@ -738,31 +719,10 @@ mod tests {
         dir
     }
 
-    // The #31 regression: the PDF paths (save_file_as with format_to == 513, and
-    // print_document) call clear_changes right before handing the document to
-    // x2t. If that call also wiped media/, x2t could no longer load the images
-    // and drew each one as a solid black rectangle.
-    #[test]
-    fn clear_changes_keeps_media() {
-        let dir = temp_dir_with_changes_and_media();
-
-        clear_changes(&dir);
-
-        assert!(
-            !dir.join("changes").exists(),
-            "clear_changes must drop pending changes"
-        );
-        assert!(
-            dir.join("media/image1.png").exists(),
-            "clear_changes must keep inserted images: x2t resolves them from \
-             media/ on every export (#31)"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     // Switching documents does invalidate the images, so the full reset still
-    // has to take media/ with it.
+    // has to take media/ with it. Nothing else may: x2t resolves the images
+    // from media/ on every export, and an export that finds it emptied draws
+    // each one as a solid black rectangle (#31).
     #[test]
     fn clear_document_temp_drops_media() {
         let dir = temp_dir_with_changes_and_media();
@@ -829,7 +789,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // Both run on temp dirs that a fresh profile has not created yet.
+    // Runs on a temp dir that a fresh profile has not created yet.
     #[test]
     fn clearing_is_a_noop_when_nothing_exists() {
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -840,7 +800,6 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
 
-        clear_changes(&dir);
         clear_document_temp(&dir);
 
         assert!(dir.exists(), "clearing must not remove the temp dir itself");

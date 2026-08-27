@@ -17,6 +17,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # deflate is the single method a docx uses besides stored, so the rest of the
 # codecs stay out of the binary.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# flock for the recovery session lock. Nothing heavier: a file-locking crate
+# would be a dependency for two calls, and libc is already in the tree.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 tauri-plugin-printer-v2 = "0.2.4"
 

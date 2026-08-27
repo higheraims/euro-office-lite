@@ -115,7 +115,7 @@ function _eoHtmlIsJustImage(html) {
 // Replays the SDK's own internal copy buffer, mirroring what sdkjs's
 // Button_Paste does when the system clipboard is unreachable. Used when a
 // clipboard probe times out because our webview owns the X11 selection and
-// arboard cannot read it (journal 030): in that state the last in-app copy
+// arboard cannot read it: in that state the last in-app copy
 // IS the clipboard content. Returns true if something was pasted.
 function _eoPasteFromLastCopyBinary(ref) {
   if (!ref.editor || !ref.ew || !ref.ew.AscCommon) return false;
@@ -314,6 +314,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'The current document has unsaved changes. Do you want to discard them and close?',
     saveError: 'Save error', saveErrorMsg: 'Could not save the file.\n\nTarget format not compatible with this document type.',
     documents: 'Documents', all: 'All', plainText: 'Plain text', user: 'User', language: 'Language',
+    recoveredDocuments: 'Recovered documents', recover: 'Recover', discard: 'Discard', discardAll: 'Discard all',
     recentFiles: 'Recent files', rememberRecent: 'Remember recent files', clearRecent: 'Clear',
     noRecentFiles: 'No recent files yet', openFailed: 'Could not open file',
     openFailedMsg: 'The file could not be opened. It may have been moved, renamed or deleted.',
@@ -339,6 +340,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'El documento actual tiene cambios sin guardar. ¿Desea descartarlos y cerrar?',
     saveError: 'Error al guardar', saveErrorMsg: 'No se pudo guardar el archivo.\n\nFormato de destino no compatible con este tipo de documento.',
     documents: 'Documentos', all: 'Todos', plainText: 'Texto plano', user: 'Usuario', language: 'Idioma',
+    recoveredDocuments: 'Documentos recuperados', recover: 'Recuperar', discard: 'Descartar', discardAll: 'Descartar todo',
     recentFiles: 'Archivos recientes', rememberRecent: 'Recordar archivos recientes', clearRecent: 'Limpiar',
     noRecentFiles: 'Todavía no hay archivos recientes', openFailed: 'No se pudo abrir el archivo',
     openFailedMsg: 'No se pudo abrir el archivo. Puede que se haya movido, renombrado o eliminado.',
@@ -364,6 +366,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'Le document actuel contient des modifications non enregistrées. Voulez-vous les abandonner et fermer ?',
     saveError: 'Erreur de sauvegarde', saveErrorMsg: 'Impossible d\'enregistrer le fichier.\n\nFormat de destination incompatible avec ce type de document.',
     documents: 'Documents', all: 'Tous', plainText: 'Texte brut', user: 'Utilisateur', language: 'Langue',
+    recoveredDocuments: 'Documents récupérés', recover: 'Récupérer', discard: 'Abandonner', discardAll: 'Tout abandonner',
     recentFiles: 'Fichiers récents', rememberRecent: 'Mémoriser les fichiers récents', clearRecent: 'Effacer',
     noRecentFiles: 'Aucun fichier récent pour le moment', openFailed: 'Impossible d\'ouvrir le fichier',
     openFailedMsg: 'Impossible d\'ouvrir le fichier. Il a peut-être été déplacé, renommé ou supprimé.',
@@ -389,6 +392,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'Das aktuelle Dokument enthält ungespeicherte Änderungen. Möchten Sie diese verwerfen und schließen?',
     saveError: 'Speicherfehler', saveErrorMsg: 'Die Datei konnte nicht gespeichert werden.\n\nZielformat nicht kompatibel mit diesem Dokumenttyp.',
     documents: 'Dokumente', all: 'Alle', plainText: 'Nur Text', user: 'Benutzer', language: 'Sprache',
+    recoveredDocuments: 'Wiederhergestellte Dokumente', recover: 'Wiederherstellen', discard: 'Verwerfen', discardAll: 'Alle verwerfen',
     recentFiles: 'Zuletzt verwendete Dateien', rememberRecent: 'Zuletzt verwendete Dateien merken', clearRecent: 'Leeren',
     noRecentFiles: 'Noch keine zuletzt verwendeten Dateien', openFailed: 'Datei konnte nicht geöffnet werden',
     openFailedMsg: 'Die Datei konnte nicht geöffnet werden. Möglicherweise wurde sie verschoben, umbenannt oder gelöscht.',
@@ -414,6 +418,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'Il documento attuale ha modifiche non salvate. Vuoi eliminarle e chiudere?',
     saveError: 'Errore di salvataggio', saveErrorMsg: 'Impossibile salvare il file.\n\nFormato di destinazione non compatibile con questo tipo di documento.',
     documents: 'Documenti', all: 'Tutti', plainText: 'Testo normale', user: 'Utente', language: 'Lingua',
+    recoveredDocuments: 'Documenti recuperati', recover: 'Recupera', discard: 'Scarta', discardAll: 'Scarta tutto',
     recentFiles: 'File recenti', rememberRecent: 'Ricorda i file recenti', clearRecent: 'Cancella',
     noRecentFiles: 'Nessun file recente', openFailed: 'Impossibile aprire il file',
     openFailedMsg: 'Impossibile aprire il file. Potrebbe essere stato spostato, rinominato o eliminato.',
@@ -439,6 +444,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'O documento atual tem alterações não salvas. Deseja descartá-las e fechar?',
     saveError: 'Erro ao salvar', saveErrorMsg: 'Não foi possível salvar o arquivo.\n\nFormato de destino não compatível com este tipo de documento.',
     documents: 'Documentos', all: 'Todos', plainText: 'Texto simples', user: 'Usuário', language: 'Idioma',
+    recoveredDocuments: 'Documentos recuperados', recover: 'Recuperar', discard: 'Descartar', discardAll: 'Descartar tudo',
     recentFiles: 'Arquivos recentes', rememberRecent: 'Lembrar arquivos recentes', clearRecent: 'Limpar',
     noRecentFiles: 'Ainda não há arquivos recentes', openFailed: 'Não foi possível abrir o arquivo',
     openFailedMsg: 'Não foi possível abrir o arquivo. Ele pode ter sido movido, renomeado ou excluído.',
@@ -464,6 +470,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'Текущий документ содержит несохранённые изменения. Отменить их и закрыть?',
     saveError: 'Ошибка сохранения', saveErrorMsg: 'Не удалось сохранить файл.\n\nФормат назначения несовместим с этим типом документа.',
     documents: 'Документы', all: 'Все', plainText: 'Обычный текст', user: 'Пользователь', language: 'Язык',
+    recoveredDocuments: 'Восстановленные документы', recover: 'Восстановить', discard: 'Отклонить', discardAll: 'Отклонить всё',
     recentFiles: 'Недавние файлы', rememberRecent: 'Запоминать недавние файлы', clearRecent: 'Очистить',
     noRecentFiles: 'Недавних файлов пока нет', openFailed: 'Не удалось открыть файл',
     openFailedMsg: 'Не удалось открыть файл. Возможно, он был перемещён, переименован или удалён.',
@@ -489,6 +496,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: 'Поточний документ має незбережені зміни. Бажаєте скасувати їх і закрити?',
     saveError: 'Помилка збереження', saveErrorMsg: 'Не вдалося зберегти файл.\n\nФормат призначення несумісний із цим типом документа.',
     documents: 'Документи', all: 'Усі', plainText: 'Звичайний текст', user: 'Користувач', language: 'Мова',
+    recoveredDocuments: 'Відновлені документи', recover: 'Відновити', discard: 'Відхилити', discardAll: 'Відхилити все',
     recentFiles: 'Нещодавні файли', rememberRecent: 'Запам\'ятовувати нещодавні файли', clearRecent: 'Очистити',
     noRecentFiles: 'Нещодавніх файлів поки немає', openFailed: 'Не вдалося відкрити файл',
     openFailedMsg: 'Не вдалося відкрити файл. Можливо, його переміщено, перейменовано або видалено.',
@@ -514,6 +522,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: '当前文档有未保存的更改。是否放弃更改并关闭？',
     saveError: '保存错误', saveErrorMsg: '无法保存文件。\n\n目标格式与此文档类型不兼容。',
     documents: '文档', all: '所有文件', plainText: '纯文本', user: '用户', language: '语言',
+    recoveredDocuments: '已恢复的文档', recover: '恢复', discard: '丢弃', discardAll: '全部丢弃',
     recentFiles: '最近的文件', rememberRecent: '记住最近的文件', clearRecent: '清除',
     noRecentFiles: '暂无最近的文件', openFailed: '无法打开文件',
     openFailedMsg: '无法打开文件。它可能已被移动、重命名或删除。',
@@ -539,6 +548,7 @@ var _UI_STRINGS = {
     unsavedDiscardClose: '現在のドキュメントには未保存の変更があります。変更を破棄して閉じますか？',
     saveError: '保存エラー', saveErrorMsg: 'ファイルを保存できませんでした。\n\n対象の形式はこのドキュメントタイプと互換性がありません。',
     documents: 'ドキュメント', all: 'すべて', plainText: 'プレーンテキスト', user: 'ユーザー', language: '言語',
+    recoveredDocuments: '復元されたドキュメント', recover: '復元', discard: '破棄', discardAll: 'すべて破棄',
     recentFiles: '最近使用したファイル', rememberRecent: '最近使用したファイルを記憶する', clearRecent: 'クリア',
     noRecentFiles: '最近使用したファイルはありません', openFailed: 'ファイルを開けませんでした',
     openFailedMsg: 'ファイルを開けませんでした。移動、名前の変更、または削除された可能性があります。',
@@ -642,13 +652,117 @@ function _findEditorWindow(win) {
   return null;
 }
 
+function _eoBaseName(path) {
+  if (!path) return null;
+  return path.replace(/\\/g, '/').split('/').pop();
+}
+
+// The same table as detect_format in file_ops.rs. Recorded in doc.info so a
+// recovered document is written back in the format its extension asks for.
+function _eoFormatForPath(path) {
+  var map = {
+    docx: 65, doc: 66, odt: 67, rtf: 68, txt: 69,
+    xlsx: 257, xls: 258, ods: 259, csv: 260,
+    pptx: 129, ppt: 130, odp: 131, pdf: 513
+  };
+  if (!path || path.indexOf('.') === -1) return null;
+  return map[path.split('.').pop().toLowerCase()] || null;
+}
+
+function _eoBytesToB64(data) {
+  if (typeof data === 'string') return btoa(data);
+  var bytes = new Uint8Array(data);
+  var binary = '';
+  for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// Opens the recovery session for the document that just went into the editor.
+// The bytes handed over are the ones openDocument received, because that is
+// what a recovery replays the changes on top of: everything the editor did
+// afterwards is already inside those changes.
+function _recoveryBegin(b64data, name, path) {
+  invoke('recovery_begin', {
+    name: name || _eoBaseName(path) || 'Untitled',
+    path: path || null,
+    format: path ? _eoFormatForPath(path) : null,
+    docType: window.AscDesktopEditor._currentDocType || 'word',
+    data: b64data
+  }).catch(function(e) {
+    window._eoLog('[RECOVER] begin failed: ' + ((e && e.message) || e));
+  });
+}
+
+// How many changes the current document was recovered with; 0 when it was
+// opened normally. It lives in the host frame's module scope on purpose: the
+// editor iframe gets its own AscDesktopEditor, but that object is a shallow
+// copy of this one (editor-patches.js), so both hold the very same functions
+// and both close over this variable. Setting it answers the editor's question
+// whichever of the two objects it asks.
+var _eoOpenChangesCount = 0;
+
+// Recovery replays a document's unsaved changes through the editor's OWN open
+// pipeline, the way the desktop shell does: the changes are ENQUEUED into
+// CollaborativeEditing.m_aChanges before openDocument runs, and openDocument
+// applies them inside onDocumentContentReady (silent mode, recalculate,
+// repaint, release the load lock, close the block action). Applying them by
+// hand after the open instead lands them on the model but never redraws the
+// canvas and leaves the load lock open.
+//
+// Enqueue is safe before the document is loaded: it only pushes onto an array
+// (Add_Changes). The count has to be answerable before the open too, so the
+// editor's first modified check sees a non-zero value.
+function _recoveryEnqueue(ref, recovery) {
+  var changes = (recovery && recovery.changes) || [];
+  try {
+    _eoOpenChangesCount = changes.length;
+    // The iframe holds its own copy of AscDesktopEditor; point its count
+    // getter at the live one before the editor asks.
+    try {
+      if (ref.ew && ref.ew.AscDesktopEditor) {
+        ref.ew.AscDesktopEditor.LocalFileGetOpenChangesCount =
+          window.AscDesktopEditor.LocalFileGetOpenChangesCount;
+      }
+    } catch(e) {}
+    // True is the editor's default; set it here so a stale instance still lets
+    // openDocument apply the queued changes in its pipeline.
+    if (ref.editor) ref.editor.isApplyChangesOnOpenEnabled = true;
+    if (changes.length && ref.ew.DesktopOfflineAppDocumentApplyChanges) {
+      // Enqueues only (Add_Changes -> m_aChanges.push); openDocument applies.
+      ref.ew.DesktopOfflineAppDocumentApplyChanges(changes);
+    }
+  } catch(e) {
+    window._eoLog('[RECOVER] enqueue failed: ' + ((e && e.message) || e));
+  }
+  window._eoLog('[RECOVER] replay n=' + changes.length);
+}
+
+// Once the open pipeline has applied the changes, the document holds work that
+// is in no file, so it must read as modified: GetOpenChangesCount answers the
+// editor's own check, set_document_modified sets the Rust flag that gates the
+// close confirmation.
+function _recoveryMarkModified(name) {
+  try {
+    window.AscDesktopEditor._isModified = true;
+    invoke('set_document_modified', { modified: true }).catch(function(){});
+    if (name) invoke('set_window_title', { name: name }).catch(function(){});
+  } catch(e) {}
+}
+
 function _forceReload() {
   window.onbeforeunload = null;
   var iframes = document.querySelectorAll('iframe');
   for (var i = 0; i < iframes.length; i++) iframes[i].remove();
-  invoke('set_document_modified', { modified: false })
+  // The document is being dropped on purpose here: it was unmodified, or the
+  // user answered the discard dialog. Ending the session keeps a deliberate
+  // close from coming back as a crash offer on the next start.
+  invoke('recovery_end', { discard: true })
     .catch(function(){})
-    .finally(function() { window.location.reload(); });
+    .finally(function() {
+      invoke('set_document_modified', { modified: false })
+        .catch(function(){})
+        .finally(function() { window.location.reload(); });
+    });
 }
 
 // Note lines (#42), a toggle. The horizontal rules above the notes come from
@@ -812,7 +926,10 @@ function _getEditor() {
   return { ew: ew, editor: editor };
 }
 
-function _loadEditorBin(b64data, fileName) {
+// `options` carries what the file name alone cannot say: the display name of a
+// document with no path yet, and the recovery payload for a document being
+// replayed.
+function _loadEditorBin(b64data, fileName, options) {
   var ref = _getEditor();
   if (!ref.editor) return;
 
@@ -872,7 +989,7 @@ function _loadEditorBin(b64data, fileName) {
           // side of Issue #23). For normalized events, drive them from here:
           // execCommand for copy/cut (fires the same copy/cut DOM event the
           // native path uses), the bridge's Paste() for paste (execCommand
-          // 'paste' is refused; verified in journal 030).
+          // 'paste' is refused).
           if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.__eoLayoutNormalized) {
             if (e.key === 'c' || e.key === 'x') {
               var execOk = false;
@@ -900,7 +1017,7 @@ function _loadEditorBin(b64data, fileName) {
               setTimeout(function() { window._eoLinuxPasteInFlight = false; }, 400);
               // read_clipboard_text hangs ~30s when our own webview owns the
               // clipboard (it cannot answer the selection request while
-              // waiting; journal 030). In that case the last in-app copy IS
+              // waiting). In that case the last in-app copy IS
               // the clipboard content, so fall back to sdkjs's internal copy
               // buffer like Button_Paste does. A fast empty read means an
               // external owner without text: probe for an image as usual.
@@ -1018,12 +1135,26 @@ function _loadEditorBin(b64data, fileName) {
       }, true);
     }
 
+    var opts = options || {};
+    // Recovery queues its changes BEFORE the open so the editor applies them in
+    // its pipeline. recovery_load already adopted the folder, so no session is
+    // opened here.
+    if (opts.recovery) {
+      _recoveryEnqueue(ref, opts.recovery);
+    }
+
     var file = new ref.ew.AscCommon.OpenFileResult();
     file.data = bytes;
     file.bSerFormat = true;
     ref.editor.openDocument(file);
     ref.ew.AscCommon.History.UserSaveMode = true;
     _ensureCoreProps(ref);
+
+    if (opts.recovery) {
+      _recoveryMarkModified(opts.name || _eoBaseName(fileName));
+    } else if (!opts.skipRecovery) {
+      _recoveryBegin(b64data, opts.name || _eoBaseName(fileName), opts.path || fileName || null);
+    }
 
     if (fileName) {
       var name = fileName.replace(/\\/g, '/').split('/').pop();
@@ -1099,7 +1230,7 @@ var SpellCheckBridge = (function() {
   // (a real custom scheme on mac and Linux, http://ascdesktop.localhost on
   // Windows, where WebView2 has no custom schemes), so it is reused rather than
   // spelled out again. Reaching it from inside the worker was verified on
-  // WebKitGTK before this was written (journal 053).
+  // WebKitGTK before this was written.
   function _dictionariesPath() {
     return ASC_PROTO_BASE + 'dictionaries';
   }
@@ -1399,7 +1530,15 @@ var SpellCheckBridge = (function() {
       _log('answer dropped: editor frame not listening');
       return;
     }
-    ref.ew.asc_nativeOnSpellCheck(payload);
+    // Worker replies are asynchronous and can arrive after the document has
+    // moved on (a reopen or replay rebuilt the paragraphs), where the editor's
+    // callback dereferences a paragraph state that no longer exists. A stale
+    // reply must never throw upward: drop it.
+    try {
+      ref.ew.asc_nativeOnSpellCheck(payload);
+    } catch(e) {
+      _log('[SPELL] stale spellcheck response dropped: ' + ((e && e.message) || e));
+    }
   }
 
   function _onWorkerMessage(data) {
@@ -1688,7 +1827,12 @@ window.AscDesktopEditor = {
         if (window._pendingFileData) {
           var pending = window._pendingFileData;
           window._pendingFileData = null;
-          _loadEditorBin(pending.data, pending.path);
+          _loadEditorBin(pending.data, pending.path, {
+            name: pending.name,
+            path: pending.path,
+            skipRecovery: !!pending.recovery,
+            recovery: pending.recovery || null
+          });
         } else {
           var emptyData = ref.ew.AscCommon.getEmpty();
           var file = new ref.ew.AscCommon.OpenFileResult();
@@ -1697,6 +1841,9 @@ window.AscDesktopEditor = {
           ref.editor.openDocument(file);
           ref.ew.AscCommon.History.UserSaveMode = true;
           _ensureCoreProps(ref);
+          // A document that never existed on disk still holds work worth
+          // recovering, and these are the bytes its changes apply to.
+          _recoveryBegin(_eoBytesToB64(emptyData), _t('newDocument'), null);
         }
       } catch(e) {
         window._eoLog('[EO] LocalStartOpen error:', e.message);
@@ -1759,7 +1906,7 @@ window.AscDesktopEditor = {
 
     try {
       var b64data = await invoke('open_file', { path: path });
-      _loadEditorBin(b64data, path);
+      _loadEditorBin(b64data, path, { path: path });
     } catch(e) {
       window._eoLog('[EO] Error opening file: ' + e);
       await _eoShowOpenError();
@@ -1824,6 +1971,14 @@ window.AscDesktopEditor = {
             await invoke('save_file_as', { path: savePath });
             var savedName = savePath.replace(/\\/g, '/').split('/').pop();
             if (pathExt !== 'pdf') {
+              // A Save As moves the document and the session follows it, so a
+              // later recovery writes where it lives now. A PDF export only
+              // writes a copy, so it is not a save for recovery purposes.
+              invoke('recovery_mark_saved', {
+                path: savePath,
+                format: _eoFormatForPath(savePath),
+                name: savedName
+              }).catch(function(){});
               invoke('set_window_title', { name: savedName }).catch(function(){});
               try {
                 var frames = document.querySelectorAll('iframe');
@@ -1852,6 +2007,12 @@ window.AscDesktopEditor = {
       } else {
         try {
           await invoke('save_file', { data: '' });
+          // Everything recorded so far is now inside the user's file, and the
+          // count is what stops that folder from being offered as a crash. The
+          // changes themselves stay: sdkjs keeps numbering deleteIndex from the
+          // start of its session, not from the last save, so emptying the file
+          // would strand it.
+          invoke('recovery_mark_saved', {}).catch(function(){});
         } catch(saveErr) {
           // Same dialog the Save As path shows. A save can fail for reasons the
           // user is the only one who can act on, a read-only location or a full
@@ -2041,7 +2202,7 @@ window.AscDesktopEditor = {
     var probeText = async function() {
       try {
         // read_clipboard_text hangs ~30s when our own webview owns the X11
-        // selection (journal 030) - exactly the copy-then-paste-in-app flow.
+        // selection - exactly the copy-then-paste-in-app flow.
         // Race it and fall back to the SDK's internal copy buffer on timeout;
         // the image probe is skipped too, it hangs the same way.
         var TIMED_OUT = { timedOut: true };
@@ -2118,7 +2279,7 @@ window.AscDesktopEditor = {
       window._eoLog('[EO] Cut: execCommand=error ' + (e.message || e));
     }
     // WebKit can refuse the cut command on sdkjs's collapsed DOM selection
-    // (journal 030); mirror sdkjs's own Button_Cut fallback: copy natively,
+    // mirror sdkjs's own Button_Cut fallback: copy natively,
     // then delete the selection.
     if (!execOk) {
       try { ref.ew.document.execCommand('copy'); } catch(e) {}
@@ -2293,9 +2454,21 @@ window.AscDesktopEditor = {
   },
 
   LocalFileSaveChanges: function(changes, deleteIndex, count) {
+    // sdkjs joins the batch with the literal sequence "," and only hands over
+    // the raw array past 100000 changes (common/Local/common.js:405-409).
+    // Splitting here is what makes both branches reach Rust as the same array
+    // instead of two different encodings of the same thing.
+    var list;
+    if (typeof changes === 'string') {
+      list = changes.length ? changes.split('","') : [];
+    } else {
+      list = changes || [];
+    }
+    // An empty batch is not noise: a save and an undo both arrive as one, and
+    // the index they carry is the whole message.
     invoke('save_changes', {
-      changes: typeof changes === 'string' ? changes : JSON.stringify(changes),
-      deleteIndex: deleteIndex,
+      changes: list,
+      deleteIndex: (deleteIndex === undefined ? null : deleteIndex),
       count: count
     }).catch(function(){});
   },
@@ -2354,9 +2527,13 @@ window.AscDesktopEditor = {
     });
   },
   LocalFileRecover: function() {},
-  LocalFileGetOpenChangesCount: function() { return 0; },
+  // Not a stub any more: a non-zero answer here is the whole reason a recovered
+  // document reports itself as modified. Have_Changes(undefined, true), the
+  // query that feeds onDocumentModifiedChanged (word/Local/api.js), looks at
+  // nothing else.
+  LocalFileGetOpenChangesCount: function() { return _eoOpenChangesCount; },
   LocalFileGetOpenChanges: function() { return ''; },
-  LocalFileSetOpenChangesCount: function() {},
+  LocalFileSetOpenChangesCount: function(count) { _eoOpenChangesCount = count | 0; },
   CanShare: function() { return false; },
   IsViewer: function() { return false; },
 };
@@ -2372,7 +2549,7 @@ window.UpdateInstallPlugins = window.UpdateInstallPlugins || function() {};
 
 listen('file-opened', (event) => {
   if (event.payload && event.payload.data) {
-    _loadEditorBin(event.payload.data, event.payload.path);
+    _loadEditorBin(event.payload.data, event.payload.path, { path: event.payload.path });
   }
 });
 

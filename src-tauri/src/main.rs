@@ -7,6 +7,7 @@ mod dictionaries;
 mod file_ops;
 mod note_separator;
 mod recent;
+mod recovery;
 
 use file_ops::AppState;
 use std::sync::Mutex;
@@ -134,12 +135,12 @@ fn main() {
             temp_dir: temp_dir.clone(),
             modified: Mutex::new(false),
             pending_recent: Mutex::new(None),
+            recovery: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             file_ops::open_file,
             file_ops::save_file,
             file_ops::save_file_as,
-            file_ops::save_changes,
             file_ops::write_editor_bin,
             file_ops::print_document,
             file_ops::create_new,
@@ -161,6 +162,13 @@ fn main() {
             recent::recent_files_state,
             recent::set_recent_files_enabled,
             recent::clear_recent_files,
+            recovery::recovery_begin,
+            recovery::save_changes,
+            recovery::recovery_mark_saved,
+            recovery::recovery_end,
+            recovery::recovery_candidates,
+            recovery::recovery_load,
+            recovery::recovery_discard,
             dictionaries::list_user_dictionaries,
         ])
         .register_uri_scheme_protocol("ascdesktop", |ctx, request| {
@@ -199,7 +207,7 @@ fn main() {
                         else if fp.ends_with(".webp") { "image/webp" }
                         else { "application/octet-stream" };
                     // no-store: x2t names media image1.jpg, image2.jpg... per document, so the
-                    // same URL serves different content across documents (journal 026 follow-up)
+                    // same URL serves different content across documents
                     return tauri::http::Response::builder()
                         .status(200)
                         .header("Content-Type", ct)
@@ -459,8 +467,17 @@ fn main() {
 
             Ok(())
         })
-        .run(context)
-        .expect("error running Euro-Office Lite");
+        .build(context)
+        .expect("error running Euro-Office Lite")
+        // The one point every ordinary exit passes through: closing an
+        // unmodified document never reaches force_close (Tauri just closes the
+        // window), and neither path may leave a recovery folder behind. A
+        // killed process never runs this, which is the case the folder is for.
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                recovery::end_session(&app_handle.state::<AppState>(), true);
+            }
+        });
 }
 
 // x2t does not use fontconfig: it scans a fixed list of directories

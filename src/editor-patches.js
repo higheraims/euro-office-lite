@@ -803,7 +803,36 @@
       }
     }
 
+    // Set by the start screen's Recover button, read here for the same reason
+    // eo-pending-open-path is: the editor is mounted once, at startup, and
+    // which one to mount is only known after Rust answers.
+    var _recovering = (function checkPendingRecoverId() {
+      var id = localStorage.getItem('eo-pending-recover-id');
+      if (!id) return false;
+      localStorage.removeItem('eo-pending-recover-id');
+
+      startScreen.classList.add('hidden');
+
+      window.__TAURI__.core.invoke('recovery_load', { id: id }).then(function(session) {
+        window._pendingFileData = {
+          data: session.data,
+          path: session.path,
+          name: session.name,
+          // Replayed by _loadEditorBin right after the document is open.
+          recovery: { id: session.id, changes: session.changes }
+        };
+        openEditor(session.docType);
+      }).catch(function(e) {
+        // Nothing is lost: the folder is still there and the start screen
+        // will offer it again.
+        window._eoLog('[RECOVER] load failed: ' + ((e && e.message) || e));
+        startScreen.classList.remove('hidden');
+      });
+      return true;
+    })();
+
     (function checkPendingOpenPath() {
+      if (_recovering) return;
       var pendingPath = localStorage.getItem('eo-pending-open-path');
       if (!pendingPath) return;
       localStorage.removeItem('eo-pending-open-path');
@@ -822,6 +851,94 @@
         window._eoShowOpenError().catch(function(){});
       });
     })();
+
+    // ── Recovered documents (crash recovery) ──
+    //
+    // Offered on the start screen rather than through a startup dialog: a modal
+    // in front of someone who just wanted to open a file taxes the ordinary
+    // case, and the folder is not going anywhere.
+    var RECOVER_ICONS = { word: 'W', cell: 'X', slide: 'P' };
+
+    function _formatRecoverDate(ms) {
+      try {
+        return new Date(ms).toLocaleString(window._eoCurrentLang || 'en',
+          { year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit' });
+      } catch(e) {
+        return '';
+      }
+    }
+
+    function _recoverDocument(id) {
+      // No session to end here: the start screen has no document open, so a
+      // plain reload is the whole job.
+      localStorage.setItem('eo-pending-recover-id', id);
+      window.location.reload();
+    }
+
+    function _renderRecoverList(candidates) {
+      var block = document.getElementById('recover-block');
+      var list = document.getElementById('recover-list');
+      list.textContent = '';
+      block.hidden = candidates.length === 0;
+
+      candidates.forEach(function(candidate) {
+        var row = document.createElement('li');
+        row.className = 'recover-item';
+        if (candidate.path) row.title = candidate.path;
+
+        var icon = document.createElement('span');
+        icon.className = 'recover-icon';
+        icon.textContent = RECOVER_ICONS[candidate.docType] || 'W';
+        row.appendChild(icon);
+
+        // User data: textContent so a name can never be parsed as markup.
+        var name = document.createElement('span');
+        name.className = 'recover-name';
+        name.textContent = candidate.name;
+        row.appendChild(name);
+
+        var date = document.createElement('span');
+        date.className = 'recover-date';
+        date.textContent = _formatRecoverDate(candidate.modifiedMs);
+        row.appendChild(date);
+
+        [['recover', function() { _recoverDocument(candidate.id); }],
+         ['discard', function() {
+            window.__TAURI__.core.invoke('recovery_discard', { id: candidate.id })
+              .then(_refreshRecoverList)
+              .catch(function(e) { _log('[RECOVER] discard failed: ' + (e.message || e)); });
+          }]].forEach(function(pair) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'recover-action';
+          // data-i18n so the language selector repaints these too.
+          button.dataset.i18n = pair[0];
+          button.textContent = _t(pair[0]);
+          button.addEventListener('click', pair[1]);
+          row.appendChild(button);
+        });
+
+        list.appendChild(row);
+      });
+    }
+
+    async function _refreshRecoverList() {
+      try {
+        _renderRecoverList(await window.__TAURI__.core.invoke('recovery_candidates'));
+      } catch(e) {
+        // The start screen comes up either way: a recovery that cannot be
+        // listed is no reason to block opening anything else.
+        document.getElementById('recover-block').hidden = true;
+        _log('[RECOVER] candidates failed: ' + (e.message || e));
+      }
+    }
+
+    document.getElementById('recover-discard-all').addEventListener('click', function() {
+      window.__TAURI__.core.invoke('recovery_discard', {})
+        .then(function() { document.getElementById('recover-block').hidden = true; })
+        .catch(function(e) { _log('[RECOVER] discard all failed: ' + (e.message || e)); });
+    });
 
     // ── Recent files (Issue #13) ──
     function _formatRecentDate(seconds) {
@@ -901,6 +1018,9 @@
     });
 
     _refreshRecentFiles();
+    // Skipped while a recovery is on its way to the editor: the start screen
+    // is leaving and that folder is this process's session now.
+    if (!_recovering) _refreshRecoverList();
 
     // ── Language selector initialization ──
     function _updateStartScreenStrings() {

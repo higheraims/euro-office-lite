@@ -17,7 +17,6 @@ Supports Word, Excel, and PowerPoint documents with native file operations and d
 Euro-Office Lite is alpha. A few things you will run into early:
 
 - **Only English and Spanish are checked out of the box** (#6). Dictionaries for both ship with the app (every regional Spanish variant is checked). Text in other languages is left unchecked, not marked as wrong, and you can add any other language yourself: see [Adding more spellcheck languages](#adding-more-spellcheck-languages).
-- **No crash recovery.** Closing the window prompts you to save unsaved changes, but if the app crashes or is force-quit mid-edit, that unsaved work is lost. Save often.
 - **Plain text (.txt) and .csv files cannot be opened yet.** They need an encoding and delimiter dialog the app does not have; DOCX, XLSX, PPTX, ODT, ODS, ODP and RTF all work.
 
 ## Requirements
