@@ -41,7 +41,77 @@
       }
     }
 
+    // Ctrl+wheel would otherwise trigger the webview's own page zoom, which
+    // scales the toolbar and panels along with the document. The official
+    // desktop app does not have this problem because its CEF shell never wires
+    // zoom to the gesture; suppressing it is the shell's job, and for this
+    // wrapper that means doing it here. sdkjs only cancels ctrl+wheel over its
+    // own canvases, so anything over the pasteboard, rulers or toolbar escapes.
+    //
+    // This covers mouse ctrl+wheel everywhere, and pinch on WKWebView, which
+    // reports it as gesture events. It does not cover trackpad pinch on
+    // Wayland: that arrives as a GDK_TOUCHPAD_PINCH event which WebKitGTK
+    // consumes before the DOM sees anything, so it is blocked in main.rs.
+    function installPinchZoomGuard(win) {
+      try {
+        if (!win || !win.document) return;
+        // Keyed on the document, not the window. The editor iframe is injected
+        // while it is still about:blank and then navigates, which replaces the
+        // document but keeps the window. A window-keyed flag left the listener
+        // on the discarded about:blank document and blocked reinstallation on
+        // the real editor document, so the guard was never live.
+        var doc = win.document;
+        if (doc.__eoPinchZoomGuard) return;
+        doc.__eoPinchZoomGuard = true;
+
+        var where = '';
+        try { where = doc.location ? doc.location.href : '(no location)'; } catch(e) {}
+        window._eoLog('[EO] pinch guard attached: ' + window._eoSafeSource(where));
+
+        var accum = 0;
+        var sawEvent = false;
+        doc.addEventListener('wheel', function(e) {
+          if (!(e.ctrlKey || e.metaKey)) return;
+          // Whether a trackpad pinch reaches the DOM at all is the open question
+          // on Wayland. Record the first one so the log answers it directly.
+          if (!sawEvent) {
+            sawEvent = true;
+            window._eoLog('[EO] pinch: ctrl+wheel reached the DOM, deltaY=' + e.deltaY);
+          }
+          e.preventDefault();
+
+          var api = win.Asc && win.Asc.editor;
+          if (!api || !api.WordControl || typeof api.zoom !== 'function') return;
+
+          accum += e.deltaY;
+          if (Math.abs(accum) < 40) return;
+          var step = accum < 0 ? 10 : -10;
+          accum = 0;
+
+          var current = api.WordControl.m_nZoomValue || 100;
+          api.zoom(Math.max(25, Math.min(500, current + step)));
+        }, { capture: true, passive: false });
+
+        // WKWebView reports pinch as gesture events rather than ctrl+wheel.
+        // gesturechange fires continuously for the duration of a pinch, so the
+        // log is one-shot; logging each event would fill the file.
+        var sawGesture = false;
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach(function(type) {
+          doc.addEventListener(type, function(e) {
+            if (!sawGesture) {
+              sawGesture = true;
+              window._eoLog('[EO] pinch: gesture events reached the DOM, first was ' + type);
+            }
+            if (e.preventDefault) e.preventDefault();
+          }, { capture: true, passive: false });
+        });
+      } catch(e) {
+        window._eoLog('[EO] pinch-zoom guard install failed: ' + (e.message || e));
+      }
+    }
+
     function injectBridgeDeep(win) {
+      installPinchZoomGuard(win);
       try {
         var hasADE = false;
         try { hasADE = !!win.AscDesktopEditor; } catch(e) {}
@@ -663,6 +733,10 @@
       }
       return el;
     };
+
+    // Guard the outer document too, so pinch over the start screen (before any
+    // editor iframe exists) cannot zoom the shell.
+    installPinchZoomGuard(window);
 
     window._openEditor = openEditor;
     async function openEditor(docType) {

@@ -443,6 +443,38 @@ fn main() {
                 #[cfg(debug_assertions)]
                 window.open_devtools();
 
+                // On Wayland a trackpad pinch arrives as a GDK_TOUCHPAD_PINCH event
+                // that WebKitGTK consumes at the widget level and turns into a scale
+                // of the whole interface. Two things were ruled out by testing: it
+                // does not go through the WebKitWebView zoom-level property, and it
+                // never reaches the DOM, so the JS wheel guard in editor-patches.js
+                // has nothing to cancel. None of the 64 WebKitSettings properties
+                // switch the gesture off. Claim the event before WebKit's own
+                // handler runs, which is the earliest public hook available.
+                #[cfg(target_os = "linux")]
+                {
+                    use gtk::prelude::*;
+                    let pinch_log = temp_dir.clone();
+                    let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    if let Err(e) = window.with_webview(move |webview| {
+                        let wv = webview.inner();
+                        log_startup(&pinch_log, "pinch guard installed at GTK level");
+                        wv.connect_event(move |_, event| {
+                            if event.event_type() != gtk::gdk::EventType::TouchpadPinch {
+                                return gtk::glib::Propagation::Proceed;
+                            }
+                            // A single pinch emits a stream of events; record only the
+                            // first so the log stays readable.
+                            if !reported.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                                log_startup(&pinch_log, "touchpad pinch seen at GTK level, event claimed");
+                            }
+                            gtk::glib::Propagation::Stop
+                        });
+                    }) {
+                        log_startup(&temp_dir, &format!("ERROR: pinch guard not installed: {e}"));
+                    }
+                }
+
                 let h = handle.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
