@@ -2495,6 +2495,11 @@ window.AscDesktopEditor = {
     win.setFullscreen(false).catch(function(){});
     win.setAlwaysOnTop(false).catch(function(){});
   },
+  // The slide editor relays pen strokes and presenter commands to a separate
+  // presenter window through this call. There is no such window here, so
+  // dropping them is correct; without the stub the call throws a TypeError
+  // inside onMouseDown and the editor stops accepting edits.
+  sendToReporter: function() {},
   ConsoleLog: (msg) => console.log('[EO]', msg),
 
   NativeViewerOpen: function() {},
