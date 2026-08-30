@@ -41,22 +41,49 @@
       }
     }
 
-    // Ctrl+wheel would otherwise trigger the webview's own page zoom, which
-    // scales the toolbar and panels along with the document. The official
-    // desktop app does not have this problem because its CEF shell never wires
-    // zoom to the gesture; suppressing it is the shell's job, and for this
-    // wrapper that means doing it here. sdkjs only cancels ctrl+wheel over its
-    // own canvases, so anything over the pasteboard, rulers or toolbar escapes.
-    //
-    // This covers mouse ctrl+wheel everywhere, and pinch on WKWebView, which
-    // reports it as gesture events. It does not cover trackpad pinch on
-    // Wayland: that arrives as a GDK_TOUCHPAD_PINCH event which WebKitGTK
-    // consumes before the DOM sees anything, so it is blocked in main.rs.
+    // The pinch is claimed for the whole window so it can never scale the
+    // interface, but it should only zoom when it lands on the document itself,
+    // not the toolbar, rulers, slide thumbnails or notes pane. sdkjs names the
+    // document canvases id_viewer and id_viewer_overlay in the word and slide
+    // editors, and ws-canvas* in the spreadsheet. Coordinates arrive in
+    // top-frame client pixels, so they are rebased onto the editor iframe
+    // before the hit test.
+    function _eoPinchOverDocument(x, y) {
+      var ew = window.AscDesktopEditor && window.AscDesktopEditor._editorWindow;
+      if (!ew || !ew.document || typeof x !== 'number' || typeof y !== 'number') return false;
+      var fx = x, fy = y;
+      var frame = ew.frameElement;
+      if (frame && frame.getBoundingClientRect) {
+        var r = frame.getBoundingClientRect();
+        if (x < r.left || x >= r.right || y < r.top || y >= r.bottom) return false;
+        fx = x - r.left;
+        fy = y - r.top;
+      }
+      var el = ew.document.elementFromPoint(fx, fy);
+      while (el) {
+        var id = el.id || '';
+        if (id.indexOf('id_viewer') === 0 || id.indexOf('ws-canvas') === 0) return true;
+        el = el.parentElement;
+      }
+      return false;
+    }
+
     // Called from the GTK pinch handler in main.rs, which runs eval against the
     // top frame. The editor api lives in the iframe, so the lookup goes through
-    // the bridge's editor window handle. step is a zoom percentage delta.
-    window.__eoPinchZoom = function(step) {
+    // the bridge's editor window handle. step is a zoom percentage delta, and
+    // x/y are where the gesture is, in top-frame client pixels.
+    //
+    // The step is deliberately a relative nudge rather than an absolute target
+    // derived from the gesture's total scale. GDK reports scale relative to the
+    // start of a gesture, and gesture boundaries have to be guessed from a gap
+    // between event timestamps because gdk 0.18 mis-generates the phase
+    // accessor as is_phase() -> bool, collapsing begin, update, end and cancel
+    // into one value. A missed boundary makes an absolute target snap the
+    // document back to the zoom it had before the previous gesture, while a
+    // relative nudge just costs one step.
+    window.__eoPinchZoom = function(step, x, y) {
       try {
+        if (!_eoPinchOverDocument(x, y)) return;
         var ew = window.AscDesktopEditor && window.AscDesktopEditor._editorWindow;
         var api = ew && ew.Asc && ew.Asc.editor;
         if (!api) return;
@@ -73,6 +100,17 @@
       }
     };
 
+    // Ctrl+wheel would otherwise trigger the webview's own page zoom, which
+    // scales the toolbar and panels along with the document. The official
+    // desktop app does not have this problem because its CEF shell never wires
+    // zoom to the gesture; suppressing it is the shell's job, and for this
+    // wrapper that means doing it here. sdkjs only cancels ctrl+wheel over its
+    // own canvases, so anything over the pasteboard, rulers or toolbar escapes.
+    //
+    // This covers mouse ctrl+wheel everywhere, and pinch on WKWebView, which
+    // reports it as gesture events. It does not cover trackpad pinch on
+    // Wayland: that arrives as a GDK_TOUCHPAD_PINCH event which WebKitGTK
+    // consumes before the DOM sees anything, so it is handled in main.rs.
     function installPinchZoomGuard(win) {
       try {
         if (!win || !win.document) return;

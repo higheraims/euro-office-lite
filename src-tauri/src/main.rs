@@ -497,8 +497,12 @@ fn main() {
                                 if !(0.9..=1.1).contains(&ratio) {
                                     let step = if ratio > 1.0 { 10 } else { -10 };
                                     pending.set(1.0);
+                                    // Position travels with the step so the page can
+                                    // decide whether the gesture is over the document
+                                    // rather than the surrounding chrome.
+                                    let (x, y) = pinch.position();
                                     let _ = eval_window.eval(&format!(
-                                        "window.__eoPinchZoom && window.__eoPinchZoom({step})"
+                                        "window.__eoPinchZoom && window.__eoPinchZoom({step},{x:.1},{y:.1})"
                                     ));
                                 }
                             }
