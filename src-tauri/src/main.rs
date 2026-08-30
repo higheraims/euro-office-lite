@@ -507,6 +507,107 @@ fn extra_font_dirs() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
 
+#[cfg(target_os = "linux")]
+const FONT_EXTENSIONS: [&str; 5] = ["ttf", "otf", "ttc", "pfb", "pfa"];
+
+#[cfg(target_os = "linux")]
+fn has_font_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            let ext = ext.to_ascii_lowercase();
+            FONT_EXTENSIONS.contains(&ext.as_str())
+        })
+        .unwrap_or(false)
+}
+
+// x2t's font scanner skips symlink entries when it lists a directory, so fonts
+// installed as links (on NixOS every font is one) never reach the editor.
+// Resolving the links and handing over their real directories is safe: x2t
+// deduplicates directories it already scans.
+#[cfg(target_os = "linux")]
+fn symlink_font_target_dirs(roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    const MAX_DEPTH: usize = 8;
+
+    let mut found: Vec<std::path::PathBuf> = Vec::new();
+    // Walking with an explicit stack and symlink_metadata: following directory
+    // links while walking can loop forever.
+    let mut stack: Vec<(std::path::PathBuf, usize)> =
+        roots.iter().map(|root| (root.clone(), 0usize)).collect();
+
+    while let Some((dir, depth)) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let path = entry.path();
+            let link_meta = match std::fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            if link_meta.file_type().is_symlink() {
+                let target = match std::fs::canonicalize(&path) {
+                    Ok(target) => target,
+                    Err(_) => continue,
+                };
+                let target_meta = match std::fs::metadata(&target) {
+                    Ok(meta) => meta,
+                    Err(_) => continue,
+                };
+                if target_meta.is_dir() {
+                    found.push(target);
+                } else if has_font_extension(&target) {
+                    if let Some(parent) = target.parent() {
+                        found.push(parent.to_path_buf());
+                    }
+                }
+            } else if link_meta.is_dir() && depth + 1 < MAX_DEPTH {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+
+    found.sort();
+    found.dedup();
+    // A target under a root is already covered: x2t scans the roots recursively,
+    // and handing it the same font twice shows a duplicate in the font list.
+    let roots: Vec<std::path::PathBuf> = roots
+        .iter()
+        .filter_map(|root| std::fs::canonicalize(root).ok())
+        .collect();
+    found.retain(|dir| !roots.iter().any(|root| dir.starts_with(root)));
+    found
+}
+
+#[cfg(not(target_os = "linux"))]
+fn symlink_font_target_dirs(_roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
+// The directories x2t scans on its own. It skips their symlinks too, so they
+// are walked here even though they are not passed as extra arguments.
+#[cfg(target_os = "linux")]
+fn symlink_scan_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = extra_font_dirs();
+    for standard in [
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        "/usr/share/X11/fonts",
+    ] {
+        let dir = std::path::PathBuf::from(standard);
+        if dir.is_dir() {
+            roots.push(dir);
+        }
+    }
+    roots
+}
+
+#[cfg(not(target_os = "linux"))]
+fn symlink_scan_roots() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
 fn run_font_generation(temp_dir: &std::path::Path, binaries_dir: &std::path::Path) {
     let marker = temp_dir.join(".fonts_generated");
 
@@ -569,6 +670,17 @@ fn run_font_generation(temp_dir: &std::path::Path, binaries_dir: &std::path::Pat
         log_startup(temp_dir, &format!("Extra font directory: {}", dir.display()));
         cmd.arg(dir);
     }
+    let symlink_dirs = symlink_font_target_dirs(&symlink_scan_roots());
+    for dir in &symlink_dirs {
+        log_startup(temp_dir, &format!("Symlink font target directory: {}", dir.display()));
+        cmd.arg(dir);
+    }
+    if !symlink_dirs.is_empty() {
+        log_startup(
+            temp_dir,
+            &format!("Symlink font target directories resolved: {}", symlink_dirs.len()),
+        );
+    }
     #[cfg(target_os = "linux")]
     cmd.env("LD_LIBRARY_PATH", binaries_dir);
     match cmd.output() {
@@ -603,5 +715,132 @@ fn run_font_generation(temp_dir: &std::path::Path, binaries_dir: &std::path::Pat
         Err(e) => {
             log_startup(temp_dir, &format!("ERROR: Font generation failed: {}", e));
         }
+    }
+}
+
+// The walker only has a body on Linux, so the assertions are gated the same way
+// even though the symlink APIs they use exist on every unix.
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> TempDir {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = std::env::temp_dir().join(format!("eo-fonts-{}-{}", name, unique));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            TempDir(path)
+        }
+
+        fn join(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn setup(name: &str) -> (TempDir, PathBuf, PathBuf) {
+        let temp = TempDir::new(name);
+        let root = temp.join("root");
+        let store = temp.join("store");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::create_dir_all(&store).expect("create store");
+        (temp, root, store)
+    }
+
+    fn resolve(root: &PathBuf) -> Vec<PathBuf> {
+        symlink_font_target_dirs(&[root.clone()])
+    }
+
+    #[test]
+    fn symlink_to_font_file_yields_target_parent() {
+        let (_temp, root, store) = setup("file");
+        std::fs::write(store.join("Sans.ttf"), b"font").expect("write font");
+        symlink(store.join("Sans.ttf"), root.join("Sans.ttf")).expect("link");
+
+        let expected = std::fs::canonicalize(&store).expect("canonicalize store");
+        assert_eq!(resolve(&root), vec![expected]);
+    }
+
+    #[test]
+    fn symlink_to_directory_yields_that_directory() {
+        let (_temp, root, store) = setup("dir");
+        std::fs::write(store.join("Sans.otf"), b"font").expect("write font");
+        symlink(&store, root.join("linked")).expect("link");
+
+        let expected = std::fs::canonicalize(&store).expect("canonicalize store");
+        assert_eq!(resolve(&root), vec![expected]);
+    }
+
+    #[test]
+    fn real_font_file_yields_nothing() {
+        let (_temp, root, _store) = setup("real");
+        std::fs::write(root.join("Sans.ttf"), b"font").expect("write font");
+
+        assert!(resolve(&root).is_empty());
+    }
+
+    #[test]
+    fn broken_symlink_yields_nothing() {
+        let (_temp, root, store) = setup("broken");
+        symlink(store.join("Missing.ttf"), root.join("Missing.ttf")).expect("link");
+
+        assert!(resolve(&root).is_empty());
+    }
+
+    #[test]
+    fn symlink_to_non_font_file_yields_nothing() {
+        let (_temp, root, store) = setup("nonfont");
+        std::fs::write(store.join("notes.txt"), b"text").expect("write file");
+        symlink(store.join("notes.txt"), root.join("notes.txt")).expect("link");
+
+        assert!(resolve(&root).is_empty());
+    }
+
+    #[test]
+    fn two_symlinks_to_same_target_yield_one_directory() {
+        let (_temp, root, store) = setup("dedup");
+        std::fs::write(store.join("Sans.ttf"), b"font").expect("write font");
+        std::fs::write(store.join("Serif.TTF"), b"font").expect("write font");
+        symlink(store.join("Sans.ttf"), root.join("Sans.ttf")).expect("link");
+        symlink(store.join("Serif.TTF"), root.join("Serif.TTF")).expect("link");
+
+        let expected = std::fs::canonicalize(&store).expect("canonicalize store");
+        assert_eq!(resolve(&root), vec![expected]);
+    }
+
+    #[test]
+    fn target_inside_the_root_yields_nothing() {
+        let (_temp, root, _store) = setup("inside");
+        let other = root.join("b");
+        std::fs::create_dir_all(&other).expect("create subdir");
+        std::fs::create_dir_all(root.join("a")).expect("create subdir");
+        std::fs::write(other.join("Sans.ttf"), b"font").expect("write font");
+        symlink(other.join("Sans.ttf"), root.join("a/Sans.ttf")).expect("link");
+
+        assert!(resolve(&root).is_empty());
+    }
+
+    #[test]
+    fn nested_directories_are_walked() {
+        let (_temp, root, store) = setup("nested");
+        let nested = root.join("a/b");
+        std::fs::create_dir_all(&nested).expect("create nested");
+        std::fs::write(store.join("Sans.ttf"), b"font").expect("write font");
+        symlink(store.join("Sans.ttf"), nested.join("Sans.ttf")).expect("link");
+
+        let expected = std::fs::canonicalize(&store).expect("canonicalize store");
+        assert_eq!(resolve(&root), vec![expected]);
     }
 }
