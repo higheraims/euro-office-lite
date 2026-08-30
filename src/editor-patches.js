@@ -52,6 +52,27 @@
     // reports it as gesture events. It does not cover trackpad pinch on
     // Wayland: that arrives as a GDK_TOUCHPAD_PINCH event which WebKitGTK
     // consumes before the DOM sees anything, so it is blocked in main.rs.
+    // Called from the GTK pinch handler in main.rs, which runs eval against the
+    // top frame. The editor api lives in the iframe, so the lookup goes through
+    // the bridge's editor window handle. step is a zoom percentage delta.
+    window.__eoPinchZoom = function(step) {
+      try {
+        var ew = window.AscDesktopEditor && window.AscDesktopEditor._editorWindow;
+        var api = ew && ew.Asc && ew.Asc.editor;
+        if (!api) return;
+        if (api.WordControl && typeof api.zoom === 'function') {
+          var current = api.WordControl.m_nZoomValue || 100;
+          api.zoom(Math.max(25, Math.min(500, current + step)));
+        } else if (typeof api.asc_getZoom === 'function' && typeof api.asc_setZoom === 'function') {
+          // Spreadsheets have no WordControl and take a factor, not a percent.
+          var factor = api.asc_getZoom() || 1;
+          api.asc_setZoom(Math.max(0.25, Math.min(5, factor + step / 100)));
+        }
+      } catch(e) {
+        window._eoLog('[EO] pinch zoom forward failed: ' + (e.message || e));
+      }
+    };
+
     function installPinchZoomGuard(win) {
       try {
         if (!win || !win.document) return;
