@@ -131,24 +131,21 @@
         var sawEvent = false;
         doc.addEventListener('wheel', function(e) {
           if (!(e.ctrlKey || e.metaKey)) return;
-          // Whether a trackpad pinch reaches the DOM at all is the open question
-          // on Wayland. Record the first one so the log answers it directly.
+          // Over the editor canvases sdkjs handles ctrl+wheel zoom itself and
+          // cancels the default, so the guard only needs to suppress the
+          // webview page zoom when the event lands on the surrounding chrome
+          // (toolbar, rulers, pasteboard).
+          var el = e.target;
+          while (el) {
+            var id = el.id || '';
+            if (id.indexOf('id_viewer') === 0 || id.indexOf('ws-canvas') === 0) return;
+            el = el.parentElement;
+          }
           if (!sawEvent) {
             sawEvent = true;
             window._eoLog('[EO] pinch: ctrl+wheel reached the DOM, deltaY=' + e.deltaY);
           }
           e.preventDefault();
-
-          var api = win.Asc && win.Asc.editor;
-          if (!api || !api.WordControl || typeof api.zoom !== 'function') return;
-
-          accum += e.deltaY;
-          if (Math.abs(accum) < 40) return;
-          var step = accum < 0 ? 10 : -10;
-          accum = 0;
-
-          var current = api.WordControl.m_nZoomValue || 100;
-          api.zoom(Math.max(25, Math.min(500, current + step)));
         }, { capture: true, passive: false });
 
         // WKWebView reports pinch as gesture events rather than ctrl+wheel.
