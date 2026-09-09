@@ -20,8 +20,15 @@ docs/*
 # Logs
 *.log
 
-# Staged frontend (built by scripts/prepare-dist.ps1)
-src-dist/
+# Staged frontend (built by scripts/prepare-dist.ps1 on Windows,
+# scripts/setup-dev-linux.sh on Linux). The trailing slash matched only a
+# real directory, so the Linux symlink was still offered for commit.
+src-dist
+
+# DoctRenderer tree assembled by scripts/setup-dev-linux.sh: bundles copied
+# out of the sdkjs and web-apps submodules, plus stubs for anything grunt
+# has not built yet.
+src-tauri/editors/
 
 # x2t sidecar binaries (download via scripts/get-x2t.ps1)
 src-tauri/binaries/
