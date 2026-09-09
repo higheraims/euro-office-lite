@@ -41,13 +41,25 @@
       }
     }
 
+    // sdkjs names the document canvases id_viewer and id_viewer_overlay in the
+    // word and slide editors, and ws-canvas* in the spreadsheet. Two callers
+    // need this test from different starting points: the GTK pinch hit test
+    // from an element found by coordinate, the ctrl+wheel guard from an event
+    // target. Keeping the prefixes in one place keeps the two in step.
+    function _eoOverDocumentCanvas(el) {
+      while (el) {
+        var id = el.id || '';
+        if (id.indexOf('id_viewer') === 0 || id.indexOf('ws-canvas') === 0) return true;
+        el = el.parentElement;
+      }
+      return false;
+    }
+
     // The pinch is claimed for the whole window so it can never scale the
     // interface, but it should only zoom when it lands on the document itself,
-    // not the toolbar, rulers, slide thumbnails or notes pane. sdkjs names the
-    // document canvases id_viewer and id_viewer_overlay in the word and slide
-    // editors, and ws-canvas* in the spreadsheet. Coordinates arrive in
-    // top-frame client pixels, so they are rebased onto the editor iframe
-    // before the hit test.
+    // not the toolbar, rulers, slide thumbnails or notes pane. Coordinates
+    // arrive in top-frame client pixels, so they are rebased onto the editor
+    // iframe before the hit test.
     function _eoPinchOverDocument(x, y) {
       var ew = window.AscDesktopEditor && window.AscDesktopEditor._editorWindow;
       if (!ew || !ew.document || typeof x !== 'number' || typeof y !== 'number') return false;
@@ -59,13 +71,7 @@
         fx = x - r.left;
         fy = y - r.top;
       }
-      var el = ew.document.elementFromPoint(fx, fy);
-      while (el) {
-        var id = el.id || '';
-        if (id.indexOf('id_viewer') === 0 || id.indexOf('ws-canvas') === 0) return true;
-        el = el.parentElement;
-      }
-      return false;
+      return _eoOverDocumentCanvas(ew.document.elementFromPoint(fx, fy));
     }
 
     // Called from the GTK pinch handler in main.rs, which runs eval against the
@@ -127,7 +133,6 @@
         try { where = doc.location ? doc.location.href : '(no location)'; } catch(e) {}
         window._eoLog('[EO] pinch guard attached: ' + window._eoSafeSource(where));
 
-        var accum = 0;
         var sawEvent = false;
         doc.addEventListener('wheel', function(e) {
           if (!(e.ctrlKey || e.metaKey)) return;
@@ -135,12 +140,7 @@
           // cancels the default, so the guard only needs to suppress the
           // webview page zoom when the event lands on the surrounding chrome
           // (toolbar, rulers, pasteboard).
-          var el = e.target;
-          while (el) {
-            var id = el.id || '';
-            if (id.indexOf('id_viewer') === 0 || id.indexOf('ws-canvas') === 0) return;
-            el = el.parentElement;
-          }
+          if (_eoOverDocumentCanvas(e.target)) return;
           if (!sawEvent) {
             sawEvent = true;
             window._eoLog('[EO] pinch: ctrl+wheel reached the DOM, deltaY=' + e.deltaY);
